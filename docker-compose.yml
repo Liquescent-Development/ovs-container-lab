@@ -1,0 +1,217 @@
+services:
+  ovs:
+    build: ./ovs-container
+    container_name: ovs
+    restart: unless-stopped
+    privileged: true
+    # Share PID namespace with host to access other container namespaces
+    pid: host
+    # Removed network_mode: host to isolate chaos testing from host network
+    # OVS userspace mode doesn't need host networking
+    volumes:
+      - ovs-run:/var/run/openvswitch
+      - ovs-lib:/var/lib/openvswitch
+      - ovs-etc:/etc/openvswitch
+      - ovs-logs:/var/log/openvswitch
+      - /var/run/netns:/var/run/netns:shared
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+      - SYS_NICE
+      - SYS_PTRACE
+      - SYS_ADMIN
+    healthcheck:
+      test: ["CMD", "/healthcheck.sh"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.enable-lifecycle'
+
+  node_exporter:
+    image: prom/node-exporter:latest
+    container_name: node_exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    pid: host
+    volumes:
+      - "/:/host:ro,rslave"
+    command:
+      - '--path.rootfs=/host'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+
+  ovs_exporter:
+    build: ./ovs-exporter
+    container_name: ovs_exporter
+    restart: unless-stopped
+    # Share process namespace with OVS container to see OVS processes for health checks
+    pid: "container:ovs"
+    ports:
+      - "9475:9475"
+    depends_on:
+      ovs:
+        condition: service_healthy
+    volumes:
+      - ovs-run:/var/run/openvswitch:rw
+      - ovs-lib:/var/lib/openvswitch:ro
+      - ovs-etc:/etc/openvswitch:ro
+      - ovs-logs:/var/log/openvswitch:ro
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+
+  pumba:
+    image: gaiaadm/pumba:latest
+    container_name: pumba
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["--help"]  # Default help command, will be overridden by chaos scripts
+    profiles:
+      - chaos  # Only start when chaos profile is active
+
+  # Test containers for network simulation - managed by compose
+  test-container-1:
+    image: alpine:latest
+    container_name: test-container-1
+    restart: unless-stopped
+    network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
+    volumes:
+      - ./scripts/network-simulation/traffic-generator.sh:/traffic-generator.sh:ro
+    command: >
+      sh -c "
+        nc -l -k -p 8080 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 22 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 443 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -u -p 53 < /dev/zero > /dev/null 2>&1 &
+        sh /traffic-generator.sh loop
+      "
+    profiles:
+      - testing
+
+  test-container-2:
+    image: alpine:latest
+    container_name: test-container-2
+    restart: unless-stopped
+    network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
+    volumes:
+      - ./scripts/network-simulation/traffic-generator.sh:/traffic-generator.sh:ro
+    command: >
+      sh -c "
+        nc -l -k -p 8080 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 22 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 443 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -u -p 53 < /dev/zero > /dev/null 2>&1 &
+        sh /traffic-generator.sh loop
+      "
+    profiles:
+      - testing
+
+  test-container-3:
+    image: alpine:latest
+    container_name: test-container-3
+    restart: unless-stopped
+    network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
+    volumes:
+      - ./scripts/network-simulation/traffic-generator.sh:/traffic-generator.sh:ro
+    command: >
+      sh -c "
+        nc -l -k -p 8080 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 22 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 443 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -u -p 53 < /dev/zero > /dev/null 2>&1 &
+        sh /traffic-generator.sh loop
+      "
+    profiles:
+      - testing
+
+  # MASSIVE high-volume nping traffic generators - MBps traffic levels
+  traffic-gen-tcp:
+    image: instrumentisto/nmap:latest
+    container_name: traffic-gen-tcp
+    restart: "no"
+    network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
+    entrypoint: nping
+    command: >
+      --tcp -p 22,80,443,8080,21,25,53,110,143,993,995 
+      --rate 5000 --count 0 --data-length 1400
+      172.18.0.10 172.18.0.11 172.18.0.12
+    profiles:
+      - traffic
+
+  traffic-gen-udp:
+    image: instrumentisto/nmap:latest
+    container_name: traffic-gen-udp
+    restart: "no"
+    network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
+    entrypoint: nping
+    command: >
+      --udp -p 53,123,161,162,514,1194,5060 
+      --rate 3000 --count 0 --data-length 1400
+      172.18.0.10 172.18.0.11 172.18.0.12
+    profiles:
+      - traffic
+
+  traffic-gen-icmp:
+    image: instrumentisto/nmap:latest
+    container_name: traffic-gen-icmp
+    restart: "no"
+    network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
+    entrypoint: nping
+    command: >
+      --icmp --rate 2000 --count 0 --data-length 1400
+      172.18.0.10 172.18.0.11 172.18.0.12
+    profiles:
+      - traffic
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  ovs-run:
+  ovs-lib:
+  ovs-etc:
+  ovs-logs:
