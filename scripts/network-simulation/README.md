@@ -1,209 +1,322 @@
 # Network Simulation Scripts
 
-This directory contains scripts to simulate various network failures and issues for testing OVS monitoring and alerting systems.
+This directory contains sophisticated network simulation and chaos engineering scripts for testing OVS behavior under various stress conditions. The scripts combine professional traffic generation, Pumba chaos engineering, and orchestrated failure scenarios.
 
 ## Quick Start
 
-The scripts can automatically set up test containers or work with existing ones:
-
 ```bash
-# Automatic setup (recommended)
-./chaos-orchestrator.sh start 10 30    # Automatically creates containers and runs tests
+# Run a quick 10-minute demo
+./demo.sh quick-demo
 
-# Manual setup
-./container-setup.sh setup             # Create test containers first
-./chaos-orchestrator.sh start 10 30    # Then run simulations
+# Check demo status
+./demo.sh status
 
-# Cleanup when done
-./chaos-orchestrator.sh cleanup        # Remove containers and stop simulations
+# Stop all demo components
+./demo.sh stop
 ```
 
-## Individual Simulation Scripts
-
-### 1. docker-isolation.sh
-Simulates switch port failures by manipulating Docker network connectivity.
+For even simpler usage, use the Makefile from the project root:
 ```bash
-# Disconnect OVS from networks (simulate switch port down)
-./docker-isolation.sh start
-
-# Reconnect to networks  
-./docker-isolation.sh stop
-
-# Check status
-./docker-isolation.sh status
+make demo          # Run quick demo
+make demo-full     # Run full 30-minute demo
+make demo-status   # Check status
+make demo-stop     # Stop everything
 ```
 
-### 2. traffic-control.sh
-Uses Linux traffic control (tc) to simulate various network conditions.
+## Scripts Overview
+
+### 1. demo.sh - Main Orchestrator
+The primary demo orchestrator that combines all testing capabilities.
+
 ```bash
-# 75% packet loss
-./traffic-control.sh packet-loss 75
-
-# 2000ms latency with jitter
-./traffic-control.sh high-latency 2000
-
-# Bandwidth limitation to 10kbit/s
-./traffic-control.sh bandwidth-limit 10kbit
-
-# Remove all restrictions
-./traffic-control.sh stop
-
-# Show current rules
-./traffic-control.sh status
+# Available commands
+./demo.sh help                      # Show all options
+./demo.sh full-demo                 # Full 30-minute demonstration
+./demo.sh quick-demo                # Quick 10-minute demo
+./demo.sh combined                  # Traffic + chaos simultaneously
+./demo.sh traffic-only [intensity]  # Just traffic generation
+./demo.sh chaos-only [scenario]     # Just chaos scenarios
+./demo.sh status                    # Show current status
+./demo.sh stop                      # Stop all components
 ```
 
-### 3. firewall-rules.sh
-Simulates switch ACL changes and firewall issues using iptables.
+**Traffic Intensities:**
+- `low`: ~10,000 pps (baseline)
+- `medium`: ~50,000 pps (moderate)
+- `high`: ~200,000+ pps (stress test)
+- `extreme`: Maximum possible (saturation)
+
+**Chaos Scenarios:**
+- `packet-loss-N`: N% packet loss (10, 20, 30, 40, 50, 60)
+- `latency-N`: N ms latency (50, 100, 300, 500, 1000)
+- `bandwidth-N`: N kbps bandwidth limit (25, 50, 100, 500, 1000)
+- `cpu-stress-N`: N cores CPU stress (2, 4, 8, 16)
+
+### 2. dashboard-demo.sh - Dashboard-Focused Demo
+Specifically designed to showcase Grafana dashboard capabilities.
+
 ```bash
-# Block all traffic
-./firewall-rules.sh block-all
+# Full dashboard demo (20 minutes)
+./dashboard-demo.sh demo
 
-# Block only HTTP/HTTPS
-./firewall-rules.sh block-http
+# Quick demo (8 minutes)
+./dashboard-demo.sh quick-demo
 
-# Block outbound traffic (upstream issues)
-./firewall-rules.sh block-outbound
+# Custom scenario
+./dashboard-demo.sh custom [scenario] [duration] [interface]
 
-# Allow only local network traffic
-./firewall-rules.sh allow-only-local
-
-# Restore normal rules
-./firewall-rules.sh stop
-
-# Show current firewall status
-./firewall-rules.sh status
+# Examples
+./dashboard-demo.sh custom packet-loss-30 120 eth0
+./dashboard-demo.sh custom bandwidth-100 180 ovs-br0
+./dashboard-demo.sh custom cpu-stress-8 120
 ```
 
-### 4. interface-control.sh
-Simulates physical interface failures and VLAN issues.
+### 3. underlay-failure-demo.sh - Infrastructure Failure Simulation
+Simulates underlay network issues affecting OVS itself.
+
 ```bash
-# Bring interface down (cable unplugged)
-./interface-control.sh interface-down
+# Full underlay failure demonstration
+./underlay-failure-demo.sh demo
 
-# Create VLAN configuration problems
-./interface-control.sh vlan-issues
+# Focus on OVS stress
+./underlay-failure-demo.sh ovs-stress
 
-# Set problematic MTU size
-./interface-control.sh mtu-problems
-
-# Change MAC address (NIC replacement)
-./interface-control.sh mac-change
-
-# Restore interface to normal
-./interface-control.sh stop
-
-# Show interface status
-./interface-control.sh status
+# Specific underlay failure
+./underlay-failure-demo.sh underlay-failure
 ```
 
-## Container Setup Script
-
-### container-setup.sh
-Manages test containers for network simulation testing.
+### 4. container-setup.sh - Container Management
+Manages test containers connected to OVS bridge.
 
 ```bash
-# Create test containers and connect to OVS
+# Set up test containers
 ./container-setup.sh setup
 
-# Remove all test containers
+# Remove test containers
 ./container-setup.sh teardown
 
-# Show container status
+# Show status
 ./container-setup.sh status
 
-# Test connectivity between containers
+# Test connectivity
 ./container-setup.sh test-connectivity
 
-# Reset (teardown + setup)
+# Reset everything
+./container-setup.sh reset
+```
+
+**Note:** Traffic generation is now handled by the professional traffic-generator container, not the test containers.
+
+## Traffic Generation
+
+### Professional Traffic Generator
+The project includes a dedicated traffic generator container with:
+- **hping3**: TCP/UDP/ICMP flood attacks
+- **iperf3**: Bandwidth testing
+- **netperf**: Network benchmarking
+- **Python Scapy**: Complex traffic patterns
+
+### Traffic Capabilities
+- **200,000+ packets per second** sustained
+- Multiple attack patterns (SYN floods, UDP floods, ICMP floods)
+- Fragmented packets and ARP storms
+- Burst traffic patterns
+- Configurable intensity levels
+
+### Starting Traffic Generation
+```bash
+# Via demo script
+./demo.sh traffic-only high
+
+# Via Make (from project root)
+make traffic-high
+make traffic-low
+make traffic-stop
+
+# Manual control
+docker exec traffic-generator pkill -f "hping3|python3"  # Stop
+docker exec -d traffic-generator hping3 --flood ...       # Start custom
+```
+
+## Chaos Engineering with Pumba
+
+The scripts integrate Pumba for network chaos injection:
+
+### Network Chaos Types
+- **Packet Loss**: 10-80% loss rates
+- **Latency**: 50-1000ms delays
+- **Bandwidth Limiting**: 25kbps to 1Mbps
+- **Packet Corruption**: 5-20% corruption
+- **Jitter**: 25-200ms variance
+- **CPU/Memory Stress**: System resource exhaustion
+
+### Running Chaos Scenarios
+```bash
+# Via demo script
+./demo.sh chaos-only packet-loss-30 180  # 30% loss for 3 minutes
+./demo.sh chaos-only cpu-stress-8 120    # 8-core stress for 2 minutes
+
+# Via Make (from project root)
+make chaos SCENARIO=packet-loss-30 DURATION=120
+make chaos-stop
+
+# Via dashboard-demo
+./dashboard-demo.sh custom packet-loss-40 120 eth0
+```
+
+## Demo Scenarios
+
+### Quick Demo (10 minutes)
+1. Baseline with medium traffic (1 min)
+2. High traffic + 30% packet loss (3 min)
+3. CPU stress + bandwidth limit (3 min)
+4. Extreme scenario (50% loss + floods) (2 min)
+5. Recovery (1 min)
+
+### Full Demo (30 minutes)
+1. **Phase 1**: Baseline (2 min)
+2. **Phase 2**: Traffic stress test (5 min)
+3. **Phase 3**: Network chaos (8 min)
+4. **Phase 4**: Resource exhaustion (5 min)
+5. **Phase 5**: Combined stress (8 min)
+6. **Phase 6**: Recovery (2 min)
+
+### Combined Demo (Recommended)
+Runs traffic generation and chaos scenarios simultaneously:
+- 200k+ pps traffic
+- 20% packet loss
+- 50ms latency
+- 4-core CPU stress
+
+## Monitoring
+
+### Grafana Dashboards
+Access at http://localhost:3000 (admin/admin)
+
+- **OVS Underlay Failure Detection**: Packet loss, drops, errors
+- **OVS Datapath & Flow Analysis**: Flow cache performance
+- **OVS Coverage & Drop Analysis**: Drop reasons and coverage events
+- **OVS System Resources**: CPU, memory, I/O statistics
+
+### Real-time Monitoring
+```bash
+# Watch packet rate
+watch -n1 './demo.sh status'
+
+# Monitor OVS metrics
+curl -s http://localhost:9475/metrics | grep ovs_
+
+# Check flow statistics
+docker exec ovs ovs-ofctl -O OpenFlow13 dump-flows ovs-br0
+
+# Watch for drops
+docker exec ovs ovs-ofctl -O OpenFlow13 dump-ports ovs-br0 | grep drop
+```
+
+## Logs and Output
+
+- Demo logs: `/tmp/ovs-demo-logs/demo.log`
+- Dashboard demo: `/tmp/dashboard-demo.log`
+- Underlay demo: `/tmp/underlay-failure-demo.log`
+
+Monitor logs:
+```bash
+tail -f /tmp/ovs-demo-logs/demo.log
+```
+
+## Integration with CI/CD
+
+```yaml
+# GitHub Actions example
+- name: Run OVS stress test
+  run: |
+    docker compose up -d
+    ./scripts/network-simulation/demo.sh quick-demo
+    # Check for failures
+    docker exec ovs ovs-ofctl -O OpenFlow13 dump-ports ovs-br0 | grep drop
+```
+
+## Troubleshooting
+
+### Traffic Generator Not Working
+```bash
+# Check if running
+docker ps | grep traffic-generator
+
+# Rebuild if needed
+docker compose build traffic-generator
+
+# Check logs
+docker logs traffic-generator
+
+# Manually start
+./demo.sh traffic-only high
+```
+
+### Chaos Scenarios Not Applied
+```bash
+# List active chaos containers
+docker ps --filter "name=chaos-"
+
+# Stop all chaos
+docker kill $(docker ps -q --filter "name=chaos-")
+
+# Check Pumba logs
+docker logs <chaos-container-name>
+```
+
+### Containers Not Connected to OVS
+```bash
+# Check OVS bridge
+docker exec ovs ovs-vsctl show
+
+# Reconnect containers
 ./container-setup.sh reset
 
-# Customize container setup
-CONTAINER_COUNT=5 ./container-setup.sh setup           # Create 5 containers
-IMAGE_NAME=httpd:alpine ./container-setup.sh setup     # Use different image
-BASE_IP=192.168.1 ./container-setup.sh setup          # Different IP range
+# Manual connection
+../ovs-docker-connect.sh <container> <ip>
 ```
 
-## Orchestration Script
+## Best Practices
 
-### chaos-orchestrator.sh
-Runs multiple failure simulations over time for comprehensive testing.
+1. **Always start with baseline**: Establish normal metrics first
+2. **Monitor dashboards**: Keep Grafana open during tests
+3. **Progressive testing**: Start mild, increase severity
+4. **Allow recovery time**: Give system time between scenarios
+5. **Check logs**: Review logs for detailed information
+6. **Resource monitoring**: Watch CPU/memory during tests
 
-```bash
-# Start 30-minute chaos test with 120-second intervals (auto-creates containers)
-./chaos-orchestrator.sh start
+## Safety Features
 
-# Start 60-minute test with 90-second intervals  
-./chaos-orchestrator.sh start 60 90
+- All scripts include proper cleanup commands
+- Automatic stop on script interruption (Ctrl+C)
+- Resource limits on chaos scenarios
+- Timeout protection on long-running operations
+- State tracking to prevent duplicate operations
 
-# Start 10-minute test with 30-second intervals
-./chaos-orchestrator.sh start 10 30
+## Advanced Usage
 
-# Set up containers only
-./chaos-orchestrator.sh setup
+### Custom Traffic Patterns
+Edit `/traffic-generator/traffic-gen.py` to create custom Scapy patterns.
 
-# Stop all running simulations
-./chaos-orchestrator.sh stop
+### Extended Chaos Scenarios
+Modify scenario arrays in demo scripts to add new test cases.
 
-# Clean up everything (stop simulations + remove containers)
-./chaos-orchestrator.sh cleanup
+### Multi-Node Testing
+Scripts can be extended to test multiple OVS instances by modifying target IPs.
 
-# Show current status
-./chaos-orchestrator.sh status
+## Files Generated
 
-# Test each simulation briefly (5 seconds each)
-./chaos-orchestrator.sh test-all
+- Container metadata: Embedded in OVS port descriptions
+- Metrics data: Stored in Prometheus (retention as configured)
+- Grafana dashboards: Persisted in grafana-data volume
+- Logs: Temporary files in /tmp (cleaned on reboot)
 
-# List available simulations
-./chaos-orchestrator.sh list-simulations
-```
+## Contributing
 
-## Usage Examples
-
-### Quick Individual Test
-```bash
-# Test packet loss simulation
-./traffic-control.sh packet-loss 50
-sleep 30
-./traffic-control.sh stop
-```
-
-### Comprehensive Testing
-```bash
-# Run chaos testing for 1 hour
-./chaos-orchestrator.sh start 60 120
-```
-
-### Monitor During Testing
-```bash
-# In one terminal - start simulation
-./chaos-orchestrator.sh start 30 60
-
-# In another terminal - watch metrics
-watch -n 5 'curl -s localhost:9475/metrics | grep ovs_up'
-
-# Or watch Grafana dashboard at http://localhost:3000
-```
-
-## Monitoring Impact
-
-These simulations will affect various OVS metrics:
-
-- **ovs_up**: Goes to 0 during severe failures
-- **ovs_bridge_ports**: Changes when interfaces are affected
-- **ovs_datapath_flows**: Varies with traffic control
-- **Network connectivity**: Container-to-container ping tests will fail
-
-## Safety Notes
-
-- All scripts include proper cleanup (`stop` command)
-- Original configurations are backed up when possible
-- Scripts check for container existence before running
-- Use `chaos-orchestrator.sh stop` to immediately stop all simulations
-
-## Log Files
-
-- Chaos orchestrator logs: `/tmp/chaos-orchestrator.log`
-- Individual script state files: `/tmp/*_simulation_state`
-- Backup files: `/tmp/*_backup*`
-
-Clean up with: `rm -f /tmp/*simulation* /tmp/*backup*`
+To add new scenarios:
+1. Add to scenario arrays in demo scripts
+2. Implement handler functions
+3. Test with all dashboards
+4. Document in this README
+5. Submit pull request

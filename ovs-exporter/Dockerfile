@@ -12,11 +12,11 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Download and install OVS exporter
-RUN wget https://github.com/greenpau/ovs_exporter/releases/download/v1.0.7/ovs-exporter_1.0.7_linux_amd64.tar.gz \
-    && tar -xzf ovs-exporter_1.0.7_linux_amd64.tar.gz \
-    && mv ovs-exporter /usr/local/bin/ \
-    && chmod +x /usr/local/bin/ovs-exporter \
-    && rm ovs-exporter_1.0.7_linux_amd64.tar.gz
+RUN wget https://github.com/Liquescent-Development/ovs_exporter/releases/download/v2.2.0/ovs-exporter-2.2.0.linux-arm64.tar.gz \
+      && tar -xzf ovs-exporter-2.2.0.linux-arm64.tar.gz \
+      && mv ovs-exporter-2.2.0.linux-arm64/ovs-exporter /usr/local/bin/ \
+      && chmod +x /usr/local/bin/ovs-exporter \
+      && rm -rf ovs-exporter-2.2.0.linux-arm64*
 
 # Create a non-root user (though we'll run as root for OVS access)
 RUN useradd -r -s /bin/false ovs

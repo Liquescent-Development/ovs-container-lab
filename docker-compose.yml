@@ -120,15 +120,13 @@ services:
     container_name: test-container-1
     restart: unless-stopped
     network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
-    volumes:
-      - ./scripts/network-simulation/traffic-generator.sh:/traffic-generator.sh:ro
     command: >
       sh -c "
+        apk add --no-cache netcat-openbsd >/dev/null 2>&1;
+        nc -l -k -p 5201 < /dev/zero > /dev/null 2>&1 &
         nc -l -k -p 8080 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -p 22 < /dev/zero > /dev/null 2>&1 &
         nc -l -k -p 443 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -u -p 53 < /dev/zero > /dev/null 2>&1 &
-        sh /traffic-generator.sh loop
+        sleep infinity
       "
     profiles:
       - testing
@@ -138,15 +136,13 @@ services:
     container_name: test-container-2
     restart: unless-stopped
     network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
-    volumes:
-      - ./scripts/network-simulation/traffic-generator.sh:/traffic-generator.sh:ro
     command: >
       sh -c "
+        apk add --no-cache netcat-openbsd >/dev/null 2>&1;
+        nc -l -k -p 5201 < /dev/zero > /dev/null 2>&1 &
         nc -l -k -p 8080 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -p 22 < /dev/zero > /dev/null 2>&1 &
         nc -l -k -p 443 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -u -p 53 < /dev/zero > /dev/null 2>&1 &
-        sh /traffic-generator.sh loop
+        sleep infinity
       "
     profiles:
       - testing
@@ -156,57 +152,32 @@ services:
     container_name: test-container-3
     restart: unless-stopped
     network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
-    volumes:
-      - ./scripts/network-simulation/traffic-generator.sh:/traffic-generator.sh:ro
     command: >
       sh -c "
+        apk add --no-cache netcat-openbsd >/dev/null 2>&1;
+        nc -l -k -p 5201 < /dev/zero > /dev/null 2>&1 &
         nc -l -k -p 8080 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -p 22 < /dev/zero > /dev/null 2>&1 &
         nc -l -k -p 443 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -u -p 53 < /dev/zero > /dev/null 2>&1 &
-        sh /traffic-generator.sh loop
+        sleep infinity
       "
     profiles:
       - testing
 
-  # MASSIVE high-volume nping traffic generators - MBps traffic levels
-  traffic-gen-tcp:
-    image: instrumentisto/nmap:latest
-    container_name: traffic-gen-tcp
+  # Professional traffic generator with hping3, iperf3, and Scapy
+  traffic-generator:
+    build: ./traffic-generator
+    container_name: traffic-generator
     restart: "no"
-    network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
-    entrypoint: nping
-    command: >
-      --tcp -p 22,80,443,8080,21,25,53,110,143,993,995 
-      --rate 5000 --count 0 --data-length 1400
-      172.18.0.10 172.18.0.11 172.18.0.12
+    network_mode: none  # Will be connected to OVS by scripts
+    privileged: true
+    command: sleep infinity  # Keep container running
     profiles:
       - traffic
-
-  traffic-gen-udp:
-    image: instrumentisto/nmap:latest
-    container_name: traffic-gen-udp
-    restart: "no"
-    network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
-    entrypoint: nping
-    command: >
-      --udp -p 53,123,161,162,514,1194,5060 
-      --rate 3000 --count 0 --data-length 1400
-      172.18.0.10 172.18.0.11 172.18.0.12
-    profiles:
-      - traffic
-
-  traffic-gen-icmp:
-    image: instrumentisto/nmap:latest
-    container_name: traffic-gen-icmp
-    restart: "no"
-    network_mode: none  # Will be connected to OVS by ovs-docker-connect.sh
-    entrypoint: nping
-    command: >
-      --icmp --rate 2000 --count 0 --data-length 1400
-      172.18.0.10 172.18.0.11 172.18.0.12
-    profiles:
-      - traffic
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "sleep"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   prometheus-data:

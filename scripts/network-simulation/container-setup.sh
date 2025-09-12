@@ -44,8 +44,9 @@ log() {
 }
 
 check_docker_network() {
-    if ! docker network ls | grep -q "monitoring-stack_default"; then
-        log "ERROR: monitoring-stack_default network not found"
+    # Check for any compose network from this project (handles different project names)
+    if ! docker network ls | grep -qE "(monitoring-stack|ovs-container-lab)_default"; then
+        log "ERROR: Docker Compose network not found"
         log "Make sure the monitoring stack is running: docker compose up -d"
         exit 1
     fi
@@ -86,8 +87,8 @@ setup_containers() {
     # Remove any existing manual test containers
     teardown_containers >/dev/null 2>&1 || true
     
-    # Navigate to monitoring stack directory for compose commands
-    local compose_dir="$(dirname "$SCRIPT_DIR")"
+    # Navigate to project root directory for compose commands
+    local compose_dir="$(dirname "$(dirname "$SCRIPT_DIR")")"
     cd "$compose_dir"
     
     log "Starting test containers with compose profile 'testing'..."
@@ -122,8 +123,8 @@ setup_containers() {
 teardown_containers() {
     log "Tearing down test containers"
     
-    # Navigate to monitoring stack directory for compose commands
-    local compose_dir="$(dirname "$SCRIPT_DIR")"
+    # Navigate to project root directory for compose commands
+    local compose_dir="$(dirname "$(dirname "$SCRIPT_DIR")")"
     cd "$compose_dir"
     
     # Stop compose-managed test containers
@@ -159,7 +160,11 @@ show_status() {
         
         echo ""
         echo "  Docker network status:"
-        docker network inspect monitoring-stack_default --format '{{len .Containers}} containers connected' | sed 's/^/    /'
+        # Find the compose network dynamically
+        local network_name=$(docker network ls --format '{{.Name}}' | grep -E "(monitoring-stack|ovs-container-lab)_default" | head -1)
+        if [ -n "$network_name" ]; then
+            docker network inspect "$network_name" --format '{{len .Containers}} containers connected' | sed 's/^/    /'
+        fi
         
     else
         echo "  No test containers currently running"
@@ -190,18 +195,22 @@ test_connectivity() {
     
     log "Found ${#test_containers[@]} containers for testing"
     
-    # Get IP addresses of test containers from Docker
+    # Get IP addresses of test containers from inside the containers (since they use network_mode: none)
     local container_ips=()
     for container in "${test_containers[@]}"; do
-        local ip=$(docker inspect "$container" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+        # Get IP from inside the container (eth1 is the OVS interface)
+        local ip=$(docker exec "$container" ip -4 addr show eth1 2>/dev/null | grep inet | awk '{print $2}' | cut -d/ -f1)
         if [ -n "$ip" ]; then
             container_ips+=("$ip")
             log "Container $container has IP: $ip"
+        else
+            log "WARNING: Could not get IP for container $container"
         fi
     done
     
     if [ ${#container_ips[@]} -lt 2 ]; then
         log "ERROR: Could not determine container IP addresses"
+        log "Make sure containers are connected to OVS bridge"
         exit 1
     fi
     
@@ -260,33 +269,14 @@ show_logs() {
 }
 
 stop_traffic() {
-    log "Stopping traffic generation in all test containers"
-    local containers=$(docker ps --filter name="test-" --format "{{.Names}}")
-    for container in $containers; do
-        if [ -n "$container" ]; then
-            docker exec "$container" pkill -f traffic-generator.sh >/dev/null 2>&1 || true
-            log "Traffic stopped in $container"
-        fi
-    done
+    log "Note: Traffic generation is now handled by the professional traffic-generator container"
+    log "Use: docker compose --profile traffic stop"
 }
 
 start_traffic() {
-    log "Starting traffic generation in all test containers"
-    local containers=$(docker ps --filter name="test-" --format "{{.Names}}")
-    for container in $containers; do
-        if [ -n "$container" ]; then
-            # Check if traffic generator exists in container
-            if docker exec "$container" test -f /traffic-generator.sh; then
-                # Kill any existing traffic generators first
-                docker exec "$container" pkill -f traffic-generator.sh >/dev/null 2>&1 || true
-                # Start new traffic generator
-                docker exec -d "$container" /traffic-generator.sh loop
-                log "Traffic started in $container"
-            else
-                log "Traffic generator script not found in $container"
-            fi
-        fi
-    done
+    log "Note: Traffic generation is now handled by the professional traffic-generator container"
+    log "Use: docker compose --profile traffic up -d traffic-generator"
+    log "Then: ./scripts/network-simulation/demo.sh traffic-only"
 }
 
 case "$1" in

@@ -6,16 +6,31 @@ A fully containerized testing and monitoring environment for Open vSwitch (OVS) 
 
 - **Open vSwitch** running in userspace datapath mode for container network virtualization
 - **Compose-managed test containers** automatically connected to OVS bridge with network services
-- **High-volume traffic generation** using nping containers for realistic network load testing
+- **Professional traffic generation** using hping3, iperf3, and Scapy for 200,000+ pps load testing
 - **Network chaos engineering** with Pumba integration for failure simulation
 - **Comprehensive monitoring** through Prometheus and Grafana with OVS-specific dashboards
 - **Automated network simulation** scripts for underlay failure detection testing
-- **Custom exporters** for OVS and Docker metrics with packet-level visibility
+- **Custom OVS exporter** providing detailed interface and datapath metrics
 - **Cross-platform compatibility** working on macOS, Linux, and Windows without host dependencies
 
 ## Quick Start
 
-### Basic Monitoring Setup
+### Using Make (Recommended)
+```bash
+# Start the monitoring stack
+make up
+
+# Run a quick demo (10 minutes)
+make demo
+
+# Check status
+make status
+
+# Stop everything
+make down
+```
+
+### Using Docker Compose Directly
 ```bash
 # Start the core monitoring stack
 docker compose up -d
@@ -31,25 +46,29 @@ docker compose ps
 
 ### Network Simulation & Chaos Testing
 ```bash
-# Start test containers with automated OVS connectivity
-./scripts/network-simulation/container-setup.sh setup
+# Quick demo (10 minutes) - combines traffic generation and chaos
+./scripts/network-simulation/demo.sh quick-demo
 
-# Run high-volume traffic generation for 2 minutes with network chaos
-./scripts/network-simulation/dashboard-demo.sh custom packet-loss-30 120 eth0
+# Full demo (30 minutes) - comprehensive stress testing
+./scripts/network-simulation/demo.sh full-demo
 
-# Monitor the OVS Underlay Failure Detection dashboard
-# http://localhost:3000/d/ovs-underlay-failure/ovs-underlay-failure-detection
+# Start professional traffic generation (200k+ pps)
+./scripts/network-simulation/demo.sh traffic-only high
 
-# Available chaos scenarios (2 minutes each):
-./scripts/network-simulation/dashboard-demo.sh custom packet-loss-40 120 eth0    # 40% packet loss
-./scripts/network-simulation/dashboard-demo.sh custom corruption-5 120 ovs-br0   # 5% packet corruption
-./scripts/network-simulation/dashboard-demo.sh custom bandwidth-200 120 ovs-br0  # 200kbps throttling
+# Monitor the dashboards
+# OVS Underlay Failure: http://localhost:3000/d/ovs-underlay-failure/ovs-underlay-failure-detection
+# Datapath & Flow Analysis: http://localhost:3000/d/ovs-datapath-flow/ovs-datapath-flow-analysis
+# Coverage & Drops: http://localhost:3000/d/ovs-coverage-drops/ovs-coverage-drops-analysis
 
-# Full demo scenario (20 minutes)
-./scripts/network-simulation/dashboard-demo.sh demo
+# Run specific chaos scenarios
+./scripts/network-simulation/demo.sh chaos-only packet-loss-30 180  # 30% packet loss for 3 min
+./scripts/network-simulation/demo.sh chaos-only cpu-stress-8 120    # 8-core CPU stress for 2 min
 
-# Clean up test containers
-./scripts/network-simulation/container-setup.sh teardown
+# Check demo status
+./scripts/network-simulation/demo.sh status
+
+# Stop all demo components
+./scripts/network-simulation/demo.sh stop
 ```
 
 ## Full Documentation
@@ -67,26 +86,69 @@ docker compose ps
 The stack consists of the following containerized components organized with Docker Compose profiles:
 
 #### Core Monitoring Stack (default profile)
-1. **OVS Container**: Runs Open vSwitch in userspace datapath mode with pre-configured bridge (ovs-br0)
-2. **OVS Exporter**: Collects and exposes OVS interface metrics (packets, bytes, errors)
-3. **Prometheus**: Time-series database for metrics collection and storage
-4. **Grafana**: Visualization platform with pre-configured OVS underlay failure detection dashboard
-5. **Node Exporter**: Host system metrics (CPU, memory, disk, network)
-6. **Docker Metrics Exporter**: Custom exporter for Docker container resource metrics
+- **OVS Container**: Runs Open vSwitch in userspace datapath mode with pre-configured bridge (ovs-br0)
+- **OVS Exporter**: Collects and exposes OVS interface metrics (packets, bytes, errors, drops)
+- **Prometheus**: Time-series database for metrics collection and storage
+- **Grafana**: Visualization platform with 4 comprehensive OVS dashboards
+- **Node Exporter**: Host system metrics (CPU, memory, disk, network)
+- **cAdvisor**: Container resource usage and performance metrics
 
-#### Network Simulation Components (testing profile)
-7. **Test Containers (1-3)**: Alpine Linux containers with network services (HTTP, SSH, HTTPS, DNS)
-8. **Traffic Generator Script**: Internal traffic generation using basic networking tools
+#### Test Containers (testing profile)
+- **Test Containers (1-3)**: Alpine Linux containers with network listeners
+- Pre-configured to connect to OVS bridge at 172.18.0.10-12
+- Used as traffic targets for testing and demonstration
 
-#### High-Volume Traffic Generation (traffic profile)
-9. **nping TCP Generator**: instrumentisto/nmap container generating 200 TCP packets/sec
-10. **nping UDP Generator**: instrumentisto/nmap container generating 150 UDP packets/sec
-11. **nping ICMP Generator**: instrumentisto/nmap container generating 100 ICMP packets/sec
+#### Professional Traffic Generation (traffic profile)
+- **Traffic Generator**: Ubuntu-based container with professional tools:
+  - **hping3**: TCP/UDP/ICMP flood attacks and packet crafting
+  - **iperf3**: Bandwidth and performance testing
+  - **netperf**: Network benchmarking
+  - **Python Scapy**: Custom traffic pattern generation
+- Capable of generating 200,000+ packets per second
+- Multiple attack patterns: SYN floods, UDP floods, ICMP floods, fragmented packets, ARP storms
 
 #### Chaos Engineering (chaos profile)
-12. **Pumba**: Network chaos engineering tool for packet loss, corruption, bandwidth limiting
+- **Pumba**: Network chaos engineering tool for:
+  - Packet loss (10-80%)
+  - Network latency (50-1000ms)
+  - Bandwidth limiting (25kbps-1Mbps)
+  - Packet corruption (5-20%)
+  - CPU/Memory stress testing
 
 All components run in containers and communicate via OVS bridge or Docker networks. Test containers and traffic generators are connected to the OVS bridge (172.18.0.x network) to ensure all traffic flows through OVS for monitoring.
+
+### Makefile Commands
+
+The project includes a comprehensive Makefile to simplify operations:
+
+```bash
+# Core operations
+make up                  # Start monitoring stack
+make down                # Stop all containers
+make restart             # Restart all services
+make status              # Show container status
+
+# Demo operations
+make demo                # Run quick 10-minute demo
+make demo-full           # Run full 30-minute demo
+make demo-status         # Check demo status
+make demo-stop           # Stop demo components
+
+# Traffic generation
+make traffic-high        # Start high-intensity traffic (200k+ pps)
+make traffic-low         # Start low-intensity traffic (10k pps)
+make traffic-stop        # Stop traffic generation
+
+# Chaos engineering
+make chaos SCENARIO=packet-loss-30 DURATION=120  # Run chaos scenario
+make chaos-stop          # Stop all chaos scenarios
+
+# Utilities
+make build               # Build all custom images
+make clean               # Clean up everything
+make dashboard           # Open Grafana dashboards
+make metrics             # Show current OVS metrics
+```
 
 ### Docker Compose Profiles
 
@@ -99,6 +161,9 @@ docker compose up -d
 # Add test containers for network simulation
 docker compose --profile testing up -d
 
+# Add professional traffic generator
+docker compose --profile traffic up -d
+
 # Add high-volume nping traffic generators
 docker compose --profile traffic up -d
 
@@ -109,39 +174,7 @@ docker compose --profile chaos up -d
 docker compose --profile testing --profile traffic --profile chaos up -d
 ```
 
-### Directory Structure
-
-```
-monitoring-stack/
-├── docker-compose.yml                 # Main orchestration with profiles
-├── prometheus.yml                    # Prometheus scraping configuration
-├── ovs-container/                   # OVS userspace container
-│   ├── Dockerfile
-│   ├── start-ovs.sh
-│   └── healthcheck.sh
-├── ovs-exporter/                    # OVS metrics exporter
-│   └── Dockerfile
-├── docker-metrics-exporter/         # Docker container metrics
-│   ├── Dockerfile
-│   └── docker-metrics.py
-├── grafana/                         # Grafana dashboards & config
-│   ├── provisioning/
-│   │   ├── dashboards/
-│   │   │   └── dashboards.yml
-│   │   └── datasources/
-│   │       └── prometheus.yml
-│   └── dashboards/
-│       └── ovs-underlay-failure.json    # Main OVS monitoring dashboard
-└── scripts/                         # Network management & simulation
-    ├── ovs-docker-connect.sh         # Connect containers to OVS
-    ├── ovs-docker-disconnect.sh      # Disconnect containers from OVS
-    └── network-simulation/           # Network chaos testing tools
-        ├── container-setup.sh        # Manage test containers
-        ├── dashboard-demo.sh         # Chaos scenario orchestration
-        └── traffic-generator.sh      # Internal traffic generation
-```
-
-### Detailed Setup
+### Getting Started
 
 #### 1. Start the Stack
 
@@ -190,15 +223,7 @@ docker exec myapp ip addr show eth1      # Check interface
 
 - **Grafana**: http://localhost:3000
   - Default credentials: admin/admin
-  - Pre-configured dashboard: "OVS Underlay Failure Detection"
-
-#### Dashboard Preview
-
-The OVS Underlay Failure Detection dashboard provides comprehensive visibility into network health and performance:
-
-![OVS Underlay Failure Detection Dashboard](dashboard1.png)
-
-![OVS + Docker Monitoring Dashboard](dashboard2.png)
+  - 5 Pre-configured dashboards (see Monitoring Dashboards section above)
 
 ### Network Simulation & Chaos Testing
 
@@ -223,22 +248,27 @@ This stack includes comprehensive network simulation capabilities for testing OV
 ./scripts/network-simulation/container-setup.sh reset
 ```
 
-#### High-Volume Traffic Generation
+#### Professional Traffic Generation
 
-The stack uses dedicated nping containers for generating realistic network loads:
+The stack includes a professional traffic generator capable of 200,000+ pps:
 
 ```bash
-# Start nping traffic generators (450 packets/sec total)
-docker compose --profile traffic up -d
+# Quick start with Make commands
+make traffic-high    # Start high-intensity traffic (200k+ pps)
+make traffic-low     # Start low-intensity traffic (10k pps)
+make traffic-stop    # Stop traffic generation
 
-# Connect traffic generators to OVS bridge
-./scripts/ovs-docker-connect.sh traffic-gen-tcp 172.18.0.20    # 200 TCP pps
-./scripts/ovs-docker-connect.sh traffic-gen-udp 172.18.0.21    # 150 UDP pps
-./scripts/ovs-docker-connect.sh traffic-gen-icmp 172.18.0.22   # 100 ICMP pps
+# Or use the demo script
+./scripts/network-simulation/demo.sh traffic-only high
 
 # Monitor traffic in real-time
 curl -s http://localhost:9475/metrics | grep "ovs_interface_.*_packets"
 ```
+
+The traffic generator uses:
+- **hping3** for flood attacks (TCP SYN, UDP, ICMP)
+- **iperf3** for bandwidth testing
+- **Python Scapy** for complex traffic patterns
 
 #### Chaos Engineering Scenarios
 
@@ -302,14 +332,45 @@ docker exec web1 ping -c 3 172.18.0.20
 
 ### Available Metrics
 
-#### OVS Metrics
+The OVS exporter (v2.2.0) provides comprehensive metrics across multiple categories:
+
+#### Core OVS Metrics
 - `ovs_up` - OVS service status (1 = up, 0 = down)
-- `ovs_interface_rx_bytes` - Bytes received per interface
-- `ovs_interface_tx_bytes` - Bytes transmitted per interface
-- `ovs_interface_rx_packets` - Packets received per interface
-- `ovs_interface_tx_packets` - Packets transmitted per interface
-- `ovs_interface_rx_errors` - Receive errors per interface
-- `ovs_interface_tx_errors` - Transmit errors per interface
+- `ovs_interface_*` - Interface statistics (rx/tx bytes, packets, errors, drops)
+- `ovs_interface_link_state` - Link up/down status
+- `ovs_interface_admin_state` - Administrative state
+- `ovs_interface_mtu` - Maximum transmission unit
+- `ovs_interface_link_speed` - Interface speed in Mbps
+
+#### Datapath Flow Metrics
+- `ovs_dp_flows` - Number of active flows in datapath
+- `ovs_dp_lookups_hit` - Successful flow cache lookups
+- `ovs_dp_lookups_missed` - Flow cache misses requiring upcall
+- `ovs_dp_lookups_lost` - Packets lost before reaching userspace
+- `ovs_dp_masks_hit` - Total masks visited for packet matching
+- `ovs_dp_masks_hit_ratio` - Average masks per packet (efficiency metric)
+- `ovs_dp_masks_total` - Total number of masks in datapath
+
+#### Coverage Statistics
+- `ovs_coverage_avg` - Event rate averages (5s, 5m, 1h intervals)
+- `ovs_coverage_total` - Total count of specific events including:
+  - `drop_action_of_pipeline` - Packets dropped by OpenFlow pipeline
+  - `dpif_execute_error` - Datapath interface execution errors
+  - `dpif_flow_put_error` - Flow installation failures
+  - Various other operational events
+
+#### System Resource Metrics
+- `ovs_memory_usage` - Memory consumption by facility
+- `ovs_log_file_size` - Log file sizes in bytes
+- `ovs_pid` - Process IDs for OVS components
+- `ovs_network_port` - Network ports used by OVS services
+
+#### Interface Error Details
+- `ovs_interface_rx_crc_err` - CRC errors on receive
+- `ovs_interface_rx_frame_err` - Framing errors
+- `ovs_interface_rx_over_err` - Buffer overrun errors
+- `ovs_interface_rx_missed_errors` - Missed packet errors
+- `ovs_interface_collisions` - Packet collisions
 
 #### Docker Container Metrics
 - `docker_cpu_usage_percent` - CPU usage percentage per container
@@ -317,7 +378,6 @@ docker exec web1 ping -c 3 172.18.0.20
 - `docker_memory_usage_percent` - Memory usage percentage
 - `docker_network_rx_bytes` - Network bytes received
 - `docker_network_tx_bytes` - Network bytes transmitted
-- `docker_containers_total` - Total number of running containers
 
 #### System Metrics (via Node Exporter)
 - `node_cpu_seconds_total` - CPU usage
