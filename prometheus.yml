@@ -18,3 +18,34 @@ scrape_configs:
   - job_name: 'cadvisor'
     static_configs:
       - targets: ['cadvisor:8080']
+
+  # VPC-A OVS Exporter (integrated)
+  - job_name: 'ovs_exporter_vpc_a'
+    static_configs:
+      - targets: ['host.docker.internal:9475']
+        labels:
+          vpc: 'vpc-a'
+          
+  # VPC-B OVS Exporter (integrated)
+  - job_name: 'ovs_exporter_vpc_b'
+    static_configs:
+      - targets: ['host.docker.internal:9477']
+        labels:
+          vpc: 'vpc-b'
+          
+  # vRouter exporters (using node_exporter on vRouters)
+  - job_name: 'vrouter-vpc-a'
+    static_configs:
+      - targets: ['host.docker.internal:9101']
+        labels:
+          vpc: 'vpc-a'
+          component: 'vrouter'
+          router_name: 'vrouter-vpc-a'
+          
+  - job_name: 'vrouter-vpc-b'
+    static_configs:
+      - targets: ['host.docker.internal:9102']
+        labels:
+          vpc: 'vpc-b'
+          component: 'vrouter'
+          router_name: 'vrouter-vpc-b'

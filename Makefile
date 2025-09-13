@@ -1,206 +1,206 @@
-# OVS Container Lab Makefile
-# Simplifies common operations and reduces shell script dependencies
+# OVS Container Lab - Simplified Makefile
+# Multi-VPC Cloud Network Simulation with OVN/OVS
 
-.PHONY: help up down start stop restart status logs demo demo-quick demo-full \
-        traffic-high traffic-low chaos clean build test-containers traffic-generator \
-        connect-containers dashboard metrics
+.PHONY: help up down status logs clean test demo stress chaos
 
 # Default target
 help:
-	@echo "OVS Container Lab - Available Commands"
-	@echo "======================================"
+	@echo "OVS Container Lab - Multi-VPC Cloud Network Simulation"
+	@echo "======================================================"
 	@echo ""
-	@echo "Core Operations:"
-	@echo "  make up                 - Start monitoring stack (OVS, Prometheus, Grafana)"
-	@echo "  make down               - Stop all containers"
-	@echo "  make restart            - Restart all services"
-	@echo "  make status             - Show container status"
-	@echo "  make logs               - Follow container logs"
+	@echo "BASIC OPERATIONS:"
+	@echo "  make up         - Start entire VPC infrastructure"
+	@echo "  make down       - Stop all containers"  
+	@echo "  make status     - Show infrastructure status"
+	@echo "  make logs       - Follow container logs"
+	@echo "  make clean      - Remove all containers and volumes"
 	@echo ""
-	@echo "Demo Operations:"
-	@echo "  make demo               - Run quick 10-minute demo"
-	@echo "  make demo-quick         - Run quick 10-minute demo"
-	@echo "  make demo-full          - Run full 30-minute demo"
-	@echo "  make demo-status        - Check demo status"
-	@echo "  make demo-stop          - Stop all demo components"
+	@echo "TESTING & DEMOS:"
+	@echo "  make test       - Run connectivity tests"
+	@echo "  make demo       - Run 10-minute demo with traffic"
+	@echo "  make demo-full  - Run 30-minute comprehensive demo"
 	@echo ""
-	@echo "Traffic Generation:"
-	@echo "  make traffic-high       - Start high-intensity traffic (200k+ pps)"
-	@echo "  make traffic-low        - Start low-intensity traffic (10k pps)"
-	@echo "  make traffic-stop       - Stop traffic generation"
+	@echo "STRESS TESTING:"
+	@echo "  make stress     - Run 2-minute stress test"
+	@echo "  make stress-heavy - Run 5-minute heavy stress test"
+	@echo "  make chaos      - Run chaos engineering scenarios"
 	@echo ""
-	@echo "Chaos Engineering:"
-	@echo "  make chaos SCENARIO=packet-loss-30 DURATION=120"
-	@echo "                          - Run chaos scenario (default: packet-loss-30 for 120s)"
-	@echo "  make chaos-stop         - Stop all chaos scenarios"
+	@echo "MONITORING:"
+	@echo "  make dashboard  - Open Grafana dashboard"
+	@echo "  make metrics    - Show current metrics"
 	@echo ""
-	@echo "Utility Commands:"
-	@echo "  make build              - Build all custom images"
-	@echo "  make clean              - Clean up everything (containers, volumes, images)"
-	@echo "  make dashboard          - Open Grafana dashboards in browser"
-	@echo "  make metrics            - Show current OVS metrics"
-	@echo "  make test-containers    - Start test containers"
-	@echo "  make connect-containers - Connect containers to OVS bridge"
+	@echo "DEVELOPMENT:"
+	@echo "  make shell-ovn  - Shell into OVN controller"
+	@echo "  make shell-ovs  - Shell into OVS container" 
+	@echo "  make build      - Rebuild all images"
 
-# Core operations
+# ==================== BASIC OPERATIONS ====================
+
 up:
-	@echo "Starting OVS monitoring stack..."
-	@docker compose up -d
-	@echo "Waiting for services to initialize..."
+	@echo "Starting Multi-VPC Infrastructure..."
+	@docker compose up -d ovn-central
 	@sleep 5
-	@docker compose ps
+	@docker compose up -d ovs-vpc-a ovs-vpc-b
+	@sleep 5
+	@docker compose up -d vrouter-vpc-a vrouter-vpc-b
+	@sleep 3
+	@echo "Configuring OVN topology..."
+	@./scripts/setup-ovn-topology.sh
+	@echo "Configuring vRouter routing..."
+	@./scripts/setup-vrouters.sh
+	@echo "Setting up test workloads..."
+	@./scripts/setup-test-workloads.sh > /dev/null 2>&1
+	@docker compose up -d prometheus grafana
 	@echo ""
-	@echo "Access points:"
+	@echo "✅ Infrastructure Ready!"
+	@echo ""
+	@echo "Access Points:"
 	@echo "  Grafana:    http://localhost:3000 (admin/admin)"
 	@echo "  Prometheus: http://localhost:9090"
-	@echo "  OVS Metrics: http://localhost:9475/metrics"
+	@echo "  OVS Metrics: http://localhost:9475/metrics (VPC-A), http://localhost:9477/metrics (VPC-B)"
+	@echo ""
+	@echo "Run 'make test' to verify connectivity"
 
 down:
 	@echo "Stopping all containers..."
-	@docker compose --profile testing --profile traffic --profile chaos down
-
-stop:
-	@echo "Stopping all containers..."
-	@docker compose --profile testing --profile traffic --profile chaos stop
-
-start:
-	@echo "Starting all containers..."
-	@docker compose --profile testing --profile traffic --profile chaos start
-
-restart: down up
+	@docker compose down
+	@echo "Infrastructure stopped"
 
 status:
-	@docker compose ps
+	@echo "=== Infrastructure Status ==="
 	@echo ""
-	@echo "OVS Bridge Status:"
-	@docker exec ovs ovs-vsctl show 2>/dev/null || echo "OVS not running"
+	@echo "OVN Controller:"
+	@docker exec ovn-central ovn-nbctl show 2>/dev/null | head -10 || echo "  ❌ Not running"
+	@echo ""
+	@echo "OVS Instances:"
+	@docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "(ovs-vpc|ovn)" || echo "  None running"
+	@echo ""
+	@echo "vRouters:"
+	@docker ps --format "table {{.Names}}\t{{.Status}}" | grep vrouter || echo "  None running"
+	@echo ""
+	@echo "Inter-VPC Connectivity:"
+	@docker exec ovs-vpc-a ip netns exec vpc-a-web-1 ping -c 1 -W 1 10.1.1.10 >/dev/null 2>&1 && echo "  ✅ Working" || echo "  ❌ Not working"
 
 logs:
 	@docker compose logs -f
 
-# Demo operations
-demo: demo-quick
+clean:
+	@echo "Cleaning up all containers and volumes..."
+	@docker compose down -v --remove-orphans
+	@docker kill $$(docker ps -q --filter "label=ovs-lab") 2>/dev/null || true
+	@docker network prune -f
+	@echo "Cleanup complete"
 
-demo-quick:
-	@echo "Starting quick demo (10 minutes)..."
-	@./scripts/network-simulation/demo.sh quick-demo
+# ==================== TESTING & DEMOS ====================
+
+test:
+	@echo "Testing VPC connectivity..."
+	@echo ""
+	@echo "1. VPC-A internal (web to app):"
+	@docker exec ovs-vpc-a ip netns exec vpc-a-web-1 ping -c 2 -W 1 10.0.2.10 || echo "  ❌ Failed"
+	@echo ""
+	@echo "2. VPC-B internal (web to app):"
+	@docker exec ovs-vpc-b ip netns exec vpc-b-web-1 ping -c 2 -W 1 10.1.2.10 || echo "  ❌ Failed"
+	@echo ""
+	@echo "3. Inter-VPC routing (VPC-A to VPC-B):"
+	@docker exec ovs-vpc-a ip netns exec vpc-a-web-1 ping -c 2 -W 1 10.1.1.10 || echo "  ❌ Failed"
+	@echo ""
+	@echo "4. GENEVE tunnels:"
+	@docker exec ovs-vpc-a ovs-vsctl show | grep -c "type: geneve" | xargs -I {} echo "  {} tunnels active"
+
+demo:
+	@echo "Starting 10-minute demo..."
+	@./scripts/run-demo.sh standard
 
 demo-full:
-	@echo "Starting full demo (30 minutes)..."
-	@./scripts/network-simulation/demo.sh full-demo
+	@echo "Starting 30-minute comprehensive demo..."
+	@./scripts/run-demo.sh comprehensive
 
-demo-status:
-	@./scripts/network-simulation/demo.sh status
+# ==================== STRESS TESTING ====================
 
-demo-stop:
-	@./scripts/network-simulation/demo.sh stop
+stress:
+	@echo "Running 2-minute stress test..."
+	@./scripts/stress-test.sh standard 120
 
-# Traffic generation
-traffic-high: traffic-generator
-	@echo "Starting high-intensity traffic generation (200k+ pps)..."
-	@./scripts/network-simulation/demo.sh traffic-only high
-
-traffic-low: traffic-generator
-	@echo "Starting low-intensity traffic generation (10k pps)..."
-	@./scripts/network-simulation/demo.sh traffic-only low
-
-traffic-stop:
-	@echo "Stopping traffic generation..."
-	@docker exec traffic-generator pkill -f "hping3|python3" 2>/dev/null || true
-	@docker compose --profile traffic stop
-
-traffic-generator:
-	@echo "Ensuring traffic generator is running..."
-	@docker compose --profile traffic up -d traffic-generator
-	@sleep 2
-	@./scripts/ovs-docker-connect.sh traffic-generator 172.18.0.30 2>/dev/null || true
-
-# Chaos engineering
-SCENARIO ?= packet-loss-30
-DURATION ?= 120
+stress-heavy:
+	@echo "Running 5-minute heavy stress test..."
+	@./scripts/stress-test.sh heavy 300
 
 chaos:
-	@echo "Running chaos scenario: $(SCENARIO) for $(DURATION) seconds..."
-	@./scripts/network-simulation/demo.sh chaos-only $(SCENARIO) $(DURATION)
+	@echo "Select chaos scenario:"
+	@echo "  1) Packet Loss (30%)"
+	@echo "  2) CPU Stress"
+	@echo "  3) Memory Pressure"
+	@echo "  4) Network Partition"
+	@echo "  5) Cascading Failure"
+	@read -p "Enter choice [1-5]: " choice; \
+	./scripts/chaos-scenario.sh $$choice
 
-chaos-stop:
-	@echo "Stopping all chaos scenarios..."
-	@docker kill $$(docker ps -q --filter "name=chaos-") 2>/dev/null || true
-	@docker kill $$(docker ps -q --filter "name=demo-pumba-") 2>/dev/null || true
+# ==================== MONITORING ====================
 
-# Test containers
-test-containers:
-	@echo "Starting test containers..."
-	@docker compose --profile testing up -d
-	@sleep 2
-	@./scripts/network-simulation/container-setup.sh setup
-
-connect-containers:
-	@echo "Connecting containers to OVS bridge..."
-	@./scripts/ovs-docker-connect.sh test-container-1 172.18.0.10
-	@./scripts/ovs-docker-connect.sh test-container-2 172.18.0.11
-	@./scripts/ovs-docker-connect.sh test-container-3 172.18.0.12
-
-# Build operations
-build:
-	@echo "Building custom images..."
-	@docker compose build ovs
-	@docker compose build ovs_exporter
-	@docker compose build traffic-generator
-	@echo "Build complete!"
-
-# Utility commands
 dashboard:
-	@echo "Opening Grafana dashboards..."
-	@open http://localhost:3000/d/ovs-underlay-failure/ovs-underlay-failure-detection 2>/dev/null || \
-	 xdg-open http://localhost:3000/d/ovs-underlay-failure/ovs-underlay-failure-detection 2>/dev/null || \
-	 echo "Please open: http://localhost:3000 (admin/admin)"
+	@echo "Opening Grafana dashboard..."
+	@open http://localhost:3000 2>/dev/null || \
+	 xdg-open http://localhost:3000 2>/dev/null || \
+	 echo "Open: http://localhost:3000 (admin/admin)"
 
 metrics:
-	@echo "Current OVS Metrics:"
-	@echo "==================="
-	@curl -s http://localhost:9475/metrics | grep -E "ovs_interface_(rx|tx)_packets{" | head -10 || \
-	 echo "Metrics not available. Is the stack running?"
+	@echo "=== Current Metrics ==="
 	@echo ""
-	@echo "Packet Rate:"
-	@docker exec ovs sh -c 'p1=$$(ovs-ofctl -O OpenFlow13 dump-flows ovs-br0 | grep -o "n_packets=[0-9]*" | cut -d= -f2); \
-	 sleep 2; \
-	 p2=$$(ovs-ofctl -O OpenFlow13 dump-flows ovs-br0 | grep -o "n_packets=[0-9]*" | cut -d= -f2); \
-	 echo "$$((($${p2:-0} - $${p1:-0}) / 2)) pps"' 2>/dev/null || echo "Unable to calculate"
+	@echo "OVN Statistics:"
+	@curl -s http://localhost:9476/metrics | grep "ovn_" | head -5
+	@echo ""
+	@echo "Traffic Rates:"
+	@curl -s http://localhost:9476/metrics | grep "ovs_interface_rx_packets" | head -5
+	@echo ""
+	@echo "Active Flows:"
+	@curl -s http://localhost:9476/metrics | grep "ovs_flow_count"
 
-clean:
-	@echo "WARNING: This will remove all containers, volumes, and custom images!"
-	@echo "Press Ctrl+C to cancel, or wait 5 seconds to continue..."
-	@sleep 5
-	@echo "Cleaning up..."
-	@docker compose --profile testing --profile traffic --profile chaos down -v
-	@docker rmi ovs-container-lab-traffic-generator 2>/dev/null || true
-	@docker rmi ovs-container-lab-ovs 2>/dev/null || true
-	@docker rmi ovs-container-lab-ovs_exporter 2>/dev/null || true
-	@echo "Cleanup complete!"
+# ==================== DEVELOPMENT ====================
 
-# Development helpers
-.PHONY: shell-ovs shell-traffic lint
+shell-ovn:
+	@docker exec -it ovn-central bash
 
 shell-ovs:
-	@docker exec -it ovs bash
+	@docker exec -it ovs-vpc-a bash
 
-shell-traffic:
-	@docker exec -it traffic-generator bash
+shell-router:
+	@docker exec -it vrouter-vpc-a bash
 
-lint:
-	@echo "Checking shell scripts..."
-	@shellcheck scripts/*.sh scripts/network-simulation/*.sh 2>/dev/null || \
-	 echo "shellcheck not installed - skipping lint"
+build:
+	@echo "Building all images..."
+	@docker compose build
+	@echo "Build complete"
 
-# Performance monitoring
-.PHONY: watch-metrics watch-flows watch-drops
+# ==================== ADVANCED ====================
 
-watch-metrics:
-	@watch -n1 'curl -s http://localhost:9475/metrics | grep -E "ovs_interface_(rx|tx)_packets" | head -10'
+.PHONY: stop start restart watch-traffic watch-flows debug
+
+stop:
+	@docker compose stop
+
+start:
+	@docker compose start
+
+restart: down up
+
+watch-traffic:
+	@watch -n1 'curl -s http://localhost:9476/metrics | grep -E "ovs_interface_(rx|tx)_packets" | head -10'
 
 watch-flows:
-	@docker exec ovs watch -n1 'ovs-ofctl -O OpenFlow13 dump-flows ovs-br0 | grep n_packets'
+	@docker exec ovs-vpc-a watch -n1 'ovs-ofctl dump-flows br-vpc-a | grep n_packets'
 
-watch-drops:
-	@docker exec ovs watch -n1 'ovs-ofctl -O OpenFlow13 dump-ports ovs-br0 | grep drop'
+debug:
+	@echo "=== Debug Information ==="
+	@echo ""
+	@echo "OVN Northbound DB:"
+	@docker exec ovn-central ovn-nbctl show
+	@echo ""
+	@echo "OVN Southbound DB:"
+	@docker exec ovn-central ovn-sbctl show
+	@echo ""
+	@echo "OVS-VPC-A Bridges:"
+	@docker exec ovs-vpc-a ovs-vsctl show
+	@echo ""
+	@echo "vRouter-A Routes:"
+	@docker exec vrouter-vpc-a ip route | grep -E "10\."
