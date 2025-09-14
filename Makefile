@@ -73,6 +73,8 @@ up: lima-start
 	@echo "🚀 Starting OVS Container Lab..."
 	@echo "Waiting for VM to be ready..."
 	@sleep 5
+	@echo "Setting up monitoring exporters on host..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py setup-monitoring" || true
 	@echo "Starting core services..."
 	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose up -d prometheus grafana ovn-central"
 	@echo "Waiting for OVN to initialize..."
@@ -100,8 +102,11 @@ down:
 	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose down"
 	@echo "✅ Containers stopped (VM still running)"
 
-clean: down lima-delete
-	@echo "✅ Everything cleaned up"
+clean: down
+	@echo "✅ Containers cleaned up (VM preserved)"
+
+clean-all: down lima-delete
+	@echo "✅ Everything cleaned up including VM"
 
 status:
 	@echo "=== VM Status ==="
@@ -124,9 +129,9 @@ lima-start:
 		limactl shell ovs-lab -- sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" openvswitch-switch openvswitch-common python3-openvswitch ovn-host ovn-common; \
 		echo "Configuring OVS for OVN..."; \
 		limactl shell ovs-lab -- sudo ovs-vsctl set open_vswitch . external_ids:system-id=chassis-host; \
+		limactl shell ovs-lab -- sudo bash -c "echo 'chassis-host' > /etc/openvswitch/system-id.conf"; \
 		limactl shell ovs-lab -- sudo ovs-vsctl set open_vswitch . external_ids:ovn-encap-type=geneve; \
-		limactl shell ovs-lab -- sudo ovs-vsctl --may-exist add-br br-int; \
-		limactl shell ovs-lab -- sudo ovs-vsctl set bridge br-int fail-mode=secure; \
+		limactl shell ovs-lab -- sudo ovs-vsctl --may-exist add-br br-int -- set bridge br-int datapath_type=netdev fail-mode=secure; \
 		echo "OVN controller will be started when OVN central is ready..."; \
 		limactl shell ovs-lab -- sudo systemctl stop ovn-controller 2>/dev/null || true; \
 	else \
@@ -138,6 +143,9 @@ lima-start:
 		limactl shell ovs-lab -- sudo DEBIAN_FRONTEND=noninteractive apt-get update; \
 		limactl shell ovs-lab -- sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" openvswitch-switch openvswitch-common python3-openvswitch ovn-host ovn-common; \
 		limactl shell ovs-lab -- sudo systemctl start openvswitch-switch; \
+		echo "Setting initial OVS system-id..."; \
+		limactl shell ovs-lab -- sudo ovs-vsctl set open_vswitch . external_ids:system-id=chassis-host; \
+		limactl shell ovs-lab -- sudo bash -c "echo 'chassis-host' > /etc/openvswitch/system-id.conf"; \
 	fi
 	@echo "Verifying OVS and OVN installation..."
 	@limactl shell ovs-lab -- which ovs-vsctl || (echo "ERROR: OVS not installed!" && exit 1)

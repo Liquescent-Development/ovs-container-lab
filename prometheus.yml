@@ -7,45 +7,17 @@ scrape_configs:
     static_configs:
       - targets: ['prometheus:9090']
 
+  # Host VM exporters (OVS runs on the Lima VM host, not in containers)
+  # Docker containers can reach the host at 172.17.0.1 (docker0 gateway)
   - job_name: 'node_exporter'
     static_configs:
-      - targets: ['node_exporter:9100']
+      - targets: ['172.17.0.1:9100']
+        labels:
+          instance: 'lima-host'
 
   - job_name: 'ovs_exporter'
     static_configs:
-      - targets: ['ovs_exporter:9475']
-
-  - job_name: 'cadvisor'
-    static_configs:
-      - targets: ['cadvisor:8080']
-
-  # VPC-A OVS Exporter (integrated)
-  - job_name: 'ovs_exporter_vpc_a'
-    static_configs:
-      - targets: ['host.docker.internal:9475']
+      - targets: ['172.17.0.1:9475']
         labels:
-          vpc: 'vpc-a'
-          
-  # VPC-B OVS Exporter (integrated)
-  - job_name: 'ovs_exporter_vpc_b'
-    static_configs:
-      - targets: ['host.docker.internal:9477']
-        labels:
-          vpc: 'vpc-b'
-          
-  # vRouter exporters (using node_exporter on vRouters)
-  - job_name: 'vrouter-vpc-a'
-    static_configs:
-      - targets: ['host.docker.internal:9101']
-        labels:
-          vpc: 'vpc-a'
-          component: 'vrouter'
-          router_name: 'vrouter-vpc-a'
-          
-  - job_name: 'vrouter-vpc-b'
-    static_configs:
-      - targets: ['host.docker.internal:9102']
-        labels:
-          vpc: 'vpc-b'
-          component: 'vrouter'
-          router_name: 'vrouter-vpc-b'
+          instance: 'lima-host'
+          component: 'ovs'

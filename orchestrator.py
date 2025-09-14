@@ -347,8 +347,11 @@ class OVNManager:
         for cmd in ovs_commands:
             subprocess.run(["sudo"] + cmd, check=True)
 
-        # Ensure br-int exists
-        subprocess.run(["sudo", "ovs-vsctl", "--may-exist", "add-br", "br-int"], check=True)
+        # Ensure br-int exists with userspace datapath
+        subprocess.run([
+            "sudo", "ovs-vsctl", "--may-exist", "add-br", "br-int",
+            "--", "set", "bridge", "br-int", "datapath_type=netdev", "fail-mode=secure"
+        ], check=True)
 
         # Clean up any stale chassis that might have been created by previous runs
         logger.info("Cleaning up any stale chassis entries...")
@@ -597,6 +600,186 @@ class TestRunner:
             return False
 
 
+class MonitoringManager:
+    """Manages monitoring setup for OVS on the host"""
+
+    def __init__(self):
+        # Detect architecture
+        import platform
+        arch = platform.machine()
+        if arch == "aarch64" or arch == "arm64":
+            self.arch = "arm64"
+        elif arch == "x86_64":
+            self.arch = "amd64"
+        else:
+            raise ValueError(f"Unsupported architecture: {arch}")
+
+        self.exporter_url = f"https://github.com/Liquescent-Development/ovs_exporter/releases/download/v2.2.0/ovs-exporter-2.2.0.linux-{self.arch}.tar.gz"
+        self.service_name = "ovs-exporter"  # Note: service name uses hyphen
+
+    def setup_ovs_exporter(self) -> bool:
+        """Download and install OVS exporter on the host"""
+        logger.info(f"Setting up OVS exporter on host (arch: {self.arch})...")
+
+        try:
+            # Clean up any previous installation attempts
+            logger.info("Cleaning up any previous installation...")
+            subprocess.run(["bash", "-c", "rm -rf /tmp/ovs-exporter*"], check=False)
+
+            # Download the exporter package
+            logger.info(f"Downloading OVS exporter for {self.arch}...")
+            subprocess.run([
+                "wget", "-q", "-O", f"/tmp/ovs-exporter-2.2.0.linux-{self.arch}.tar.gz",
+                self.exporter_url
+            ], check=True)
+
+            # Extract the package
+            logger.info("Extracting OVS exporter package...")
+            subprocess.run([
+                "tar", "xzf", f"/tmp/ovs-exporter-2.2.0.linux-{self.arch}.tar.gz", "-C", "/tmp"
+            ], check=True)
+
+            # Copy the binary to /usr/local/bin
+            logger.info("Installing OVS exporter binary...")
+            subprocess.run([
+                "cp", f"/tmp/ovs-exporter-2.2.0.linux-{self.arch}/ovs-exporter",
+                "/usr/local/bin/ovs-exporter"
+            ], check=True)
+
+            subprocess.run([
+                "chmod", "+x", "/usr/local/bin/ovs-exporter"
+            ], check=True)
+
+            # Sync system-id from OVS database to config file
+            logger.info("Syncing system-id from OVS database to config file...")
+            try:
+                result = subprocess.run(
+                    ["ovs-vsctl", "get", "open_vswitch", ".", "external_ids:system-id"],
+                    capture_output=True, text=True, check=True
+                )
+                system_id = result.stdout.strip().strip('"')  # Remove quotes if present
+
+                # Create the directory if it doesn't exist
+                subprocess.run(["mkdir", "-p", "/etc/openvswitch"], check=True)
+
+                # Write the system-id to the config file
+                with open("/etc/openvswitch/system-id.conf", "w") as f:
+                    f.write(system_id + "\n")
+
+                logger.info(f"Synced system-id: {system_id}")
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"Could not sync system-id: {e}")
+                # Continue anyway - the exporter might work without it
+
+            # Create systemd service file with proper flags
+            logger.info("Creating systemd service...")
+            service_content = """[Unit]
+Description=OVS Exporter for Prometheus
+After=network.target openvswitch-switch.service ovn-controller.service
+Wants=openvswitch-switch.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/ovs-exporter \
+  --web.listen-address=:9475 \
+  --web.telemetry-path=/metrics \
+  --ovs.timeout=2 \
+  --ovs.poll-interval=15 \
+  --log.level=info \
+  --system.run.dir=/var/run/openvswitch \
+  --database.vswitch.name=Open_vSwitch \
+  --database.vswitch.socket.remote=unix:/var/run/openvswitch/db.sock \
+  --database.vswitch.file.data.path=/etc/openvswitch/conf.db \
+  --database.vswitch.file.log.path=/var/log/openvswitch/ovsdb-server.log \
+  --database.vswitch.file.pid.path=/var/run/openvswitch/ovsdb-server.pid \
+  --database.vswitch.file.system.id.path=/etc/openvswitch/system-id.conf \
+  --service.vswitchd.file.log.path=/var/log/openvswitch/ovs-vswitchd.log \
+  --service.vswitchd.file.pid.path=/var/run/openvswitch/ovs-vswitchd.pid \
+  --service.ovncontroller.file.log.path=/var/log/ovn/ovn-controller.log \
+  --service.ovncontroller.file.pid.path=/var/run/ovn/ovn-controller.pid
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+"""
+            with open(f"/etc/systemd/system/{self.service_name}.service", "w") as f:
+                f.write(service_content)
+
+            # Reload systemd and start service
+            logger.info("Starting OVS exporter service...")
+            subprocess.run(["systemctl", "daemon-reload"], check=True)
+            subprocess.run(["systemctl", "enable", self.service_name], check=True)
+            subprocess.run(["systemctl", "restart", self.service_name], check=True)
+
+            # Clean up temporary files
+            logger.info("Cleaning up temporary files...")
+            subprocess.run(["bash", "-c", f"rm -rf /tmp/ovs-exporter-2.2.0.linux-{self.arch}*"], check=False)
+
+            # Verify the service is running
+            time.sleep(2)
+            result = subprocess.run(
+                ["systemctl", "is-active", self.service_name],
+                capture_output=True, text=True
+            )
+
+            if result.stdout.strip() == "active":
+                logger.info("OVS exporter service is running")
+
+                # Test the metrics endpoint
+                try:
+                    result = subprocess.run([
+                        "curl", "-s", "http://localhost:9475/metrics"
+                    ], capture_output=True, text=True, check=True)
+
+                    if "ovs_" in result.stdout or "server_id" in result.stdout:
+                        logger.info("OVS exporter metrics endpoint is working correctly")
+                        return True
+                    else:
+                        logger.warning("Metrics endpoint accessible but no OVS metrics found")
+                        return True
+                except:
+                    logger.warning("Could not verify metrics endpoint")
+
+                return True
+            else:
+                logger.error(f"OVS exporter service is not active: {result.stdout.strip()}")
+                # Try to get more info
+                subprocess.run(["systemctl", "status", self.service_name, "-l"], check=False)
+                return False
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to setup OVS exporter: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error setting up OVS exporter: {e}")
+            return False
+
+    def setup_node_exporter(self) -> bool:
+        """Install and configure node_exporter on the host"""
+        logger.info("Setting up node_exporter on host...")
+
+        try:
+            # Install node_exporter via apt
+            subprocess.run([
+                "apt-get", "install", "-y", "prometheus-node-exporter"
+            ], check=True, capture_output=True)
+
+            # Enable and start the service
+            subprocess.run(["systemctl", "enable", "prometheus-node-exporter"], check=True)
+            subprocess.run(["systemctl", "restart", "prometheus-node-exporter"], check=True)
+
+            logger.info("Node exporter is running on port 9100")
+            return True
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to setup node_exporter: {e}")
+            return False
+
+
 class ChaosEngineer:
     """Implements chaos testing scenarios"""
 
@@ -678,6 +861,9 @@ def main():
     # Bind-containers command
     bind_parser = subparsers.add_parser("bind-containers", help="Bind containers to OVN")
 
+    # Setup-monitoring command
+    monitoring_parser = subparsers.add_parser("setup-monitoring", help="Setup monitoring exporters on host")
+
     # Test command
     test_parser = subparsers.add_parser("test", help="Run connectivity tests")
 
@@ -725,6 +911,11 @@ def main():
     elif args.command == "bind-containers":
         ovn = OVNManager()
         ovn.setup_container_networking()
+
+    elif args.command == "setup-monitoring":
+        monitor = MonitoringManager()
+        success = monitor.setup_ovs_exporter() and monitor.setup_node_exporter()
+        return 0 if success else 1
 
     elif args.command == "test":
         tester = TestRunner()
