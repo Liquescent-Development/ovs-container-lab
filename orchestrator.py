@@ -415,6 +415,59 @@ class OVNManager:
 
             return False
 
+    def connect_container_to_bridge(self, container_name: str, ip_address: str, bridge: str = "br-int"):
+        """Connect a container directly to an OVS bridge without OVN"""
+        logger.info(f"Connecting {container_name} to bridge {bridge} with IP {ip_address}")
+
+        try:
+            # Get container PID
+            result = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Pid}}", container_name],
+                capture_output=True, text=True, check=True
+            )
+            container_pid = result.stdout.strip()
+
+            if not container_pid or container_pid == "0":
+                logger.error(f"Container {container_name} is not running")
+                return False
+
+            # Create veth pair
+            veth_host = f"veth-{container_name[:8]}"
+            veth_container = f"eth1"
+
+            # Delete any existing veth pair
+            subprocess.run(["sudo", "ip", "link", "delete", veth_host], check=False, stderr=subprocess.DEVNULL)
+
+            # Create new veth pair
+            subprocess.run([
+                "sudo", "ip", "link", "add", veth_host, "type", "veth", "peer", "name", veth_container
+            ], check=True)
+
+            # Move container end to the container's network namespace
+            subprocess.run([
+                "sudo", "ip", "link", "set", veth_container, "netns", container_pid
+            ], check=True)
+
+            # Configure container interface
+            subnet_prefix = ".".join(ip_address.split(".")[:-1])
+            subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "addr", "add", f"{ip_address}/24", "dev", veth_container], check=True)
+            subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "link", "set", veth_container, "up"], check=True)
+
+            # Add default route if it's not a local bridge network
+            if bridge == "br-int":
+                subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "route", "add", "default", "via", f"{subnet_prefix}.1"], check=False)
+
+            # Add host end to OVS bridge
+            subprocess.run(["sudo", "ovs-vsctl", "add-port", bridge, veth_host], check=True)
+            subprocess.run(["sudo", "ip", "link", "set", veth_host, "up"], check=True)
+
+            logger.info(f"Successfully connected {container_name} to {bridge}")
+            return True
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to connect container: {e}")
+            return False
+
     def bind_container_to_ovn(self, container_name: str, switch_name: str, ip_address: str, mac_address: Optional[str] = None):
         """Bind a container to an OVN logical switch port"""
         logger.info(f"Binding container {container_name} to OVN switch {switch_name}...")
@@ -424,14 +477,41 @@ class OVNManager:
             import random
             mac_address = "02:00:00:%02x:%02x:%02x" % (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
 
-        # Create logical switch port
+        # Check if port already exists and if container is already connected
         port_name = f"lsp-{container_name}"
+
+        # Check if the logical switch port already exists
         try:
-            self.run_nbctl(["lsp-add", switch_name, port_name])
-            self.run_nbctl(["lsp-set-addresses", port_name, f"{mac_address} {ip_address}"])
-            logger.info(f"Created logical switch port {port_name}")
+            existing_addresses = self.run_nbctl(["lsp-get-addresses", port_name])
+            port_exists = True
+            logger.info(f"Port {port_name} already exists with addresses: {existing_addresses}")
         except subprocess.CalledProcessError:
-            logger.warning(f"Port {port_name} may already exist")
+            port_exists = False
+            logger.info(f"Port {port_name} does not exist, will create it")
+
+        # Check if container already has the interface
+        cmd = ["docker", "exec", container_name, "ip", "link", "show", "eth1"]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        container_connected = (result.returncode == 0)
+
+        if port_exists and container_connected:
+            logger.info(f"Container {container_name} is already fully connected to OVN, skipping")
+            return
+
+        # Create logical switch port if it doesn't exist
+        if not port_exists:
+            try:
+                self.run_nbctl(["lsp-add", switch_name, port_name])
+                self.run_nbctl(["lsp-set-addresses", port_name, f"{mac_address} {ip_address}"])
+                logger.info(f"Created logical switch port {port_name}")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Failed to create port: {e}")
+                return
+
+        # Skip physical connection if container already has the interface
+        if container_connected:
+            logger.info(f"Container {container_name} already has eth1 interface, skipping physical connection")
+            return
 
         # Get container PID for namespace operations
         cmd = ["docker", "inspect", "-f", "{{.State.Pid}}", container_name]
@@ -497,6 +577,8 @@ class OVNManager:
             {"name": "vpc-b-web", "switch": "ls-vpc-b-web", "ip": "10.1.1.10"},
             {"name": "vpc-b-app", "switch": "ls-vpc-b-app", "ip": "10.1.2.10"},
             {"name": "vpc-b-db", "switch": "ls-vpc-b-db", "ip": "10.1.3.10"},
+            # Traffic generator on transit network
+            {"name": "traffic-generator", "switch": "ls-transit", "ip": "192.168.100.200"},
         ]
 
         for config in container_config:

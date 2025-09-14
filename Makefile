@@ -209,18 +209,37 @@ traffic-start:
 	@sleep 3
 	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic build traffic-generator"
 	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic up -d traffic-generator"
+	@echo "Connecting traffic generator to OVN transit network..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py bind-containers"
 	@echo "Traffic generator ready. Use 'make traffic-run' to generate traffic"
 
 traffic-run:
-	@echo "Generating traffic between containers..."
-	@limactl shell ovs-lab -- sudo docker exec traffic-generator python3 /workspace/traffic-gen.py
+	@echo "Generating multi-VPC traffic patterns..."
+	@echo "Starting traffic generator in background (it will run until stopped)..."
+	@limactl shell ovs-lab -- sudo docker exec -d traffic-generator python3 /workspace/multi-vpc-traffic-gen.py standard
+	@echo "Traffic is being generated. Check Grafana dashboards to see the traffic."
+	@echo "Use 'make traffic-status' to check status or 'make traffic-stop' to stop."
+
+traffic-status:
+	@echo "Checking traffic generator status..."
+	@limactl shell ovs-lab -- bash -c "sudo docker exec traffic-generator ps aux | grep -v grep | grep multi-vpc && echo 'Traffic generator is running' || echo 'Traffic generator is not running'"
 
 traffic-heavy:
 	@echo "Generating heavy traffic load..."
-	@limactl shell ovs-lab -- sudo docker exec traffic-generator bash -c "iperf3 -c 10.0.1.10 -t 60 -P 10"
+	@limactl shell ovs-lab -- sudo docker exec traffic-generator python3 /workspace/multi-vpc-traffic-gen.py high
+
+traffic-overload:
+	@echo "Generating overload traffic (includes malformed packets)..."
+	@limactl shell ovs-lab -- sudo docker exec traffic-generator python3 /workspace/multi-vpc-traffic-gen.py overload
 
 traffic-stop:
-	@echo "Stopping traffic generator..."
+	@echo "Stopping traffic generator processes..."
+	@limactl shell ovs-lab -- sudo docker exec traffic-generator pkill -f multi-vpc || true
+	@echo "Traffic generation stopped. Container is still running for future use."
+	@echo "Use 'make traffic-stop-container' to stop the container completely."
+
+traffic-stop-container:
+	@echo "Stopping traffic generator container..."
 	@limactl shell ovs-lab -- sudo docker compose --profile traffic down
 
 # ==================== CHAOS ENGINEERING ====================
