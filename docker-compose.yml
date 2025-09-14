@@ -11,13 +11,20 @@ services:
     networks:
       transit-overlay:
         ipv4_address: 192.168.100.5
+    ports:
+      - "6641:6641"  # OVN Northbound DB
+      - "6642:6642"  # OVN Southbound DB
+      - "9876:5000"  # Docker network driver API (map container 5000 to host 9876)
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # Docker API access
       - ovn-nb-db:/var/lib/ovn
       - ovn-logs:/var/log/ovn
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
       - SYS_NICE
+    environment:
+      - ENABLE_DOCKER_DRIVER=true
     healthcheck:
       test: ["CMD", "/healthcheck.sh"]
       interval: 30s
@@ -28,151 +35,9 @@ services:
       - "ovs-lab=true"
       - "component=control-plane"
 
-  # VPC-A OVS Instance
-  ovs-vpc-a:
-    build: ./ovs-container
-    container_name: ovs-vpc-a
-    hostname: ovs-vpc-a
-    restart: unless-stopped
-    privileged: true
-    ports:
-      - "9475:9475"  # OVS exporter metrics
-    networks:
-      vpc-a-internal:
-        ipv4_address: 192.168.10.2
-      transit-overlay:
-        ipv4_address: 192.168.100.10
-    volumes:
-      - ovs-vpc-a-run:/var/run/openvswitch
-      - ovs-vpc-a-lib:/var/lib/openvswitch
-      - ovs-vpc-a-logs:/var/log/openvswitch
-      - ovs-vpc-a-etc:/etc/openvswitch
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-      - SYS_NICE
-    environment:
-      - OVS_BRIDGE_NAME=br-vpc-a
-      - OVS_BRIDGE_IP=10.0.99.1/24
-      - OVN_REMOTE=tcp:192.168.100.5:6642
-      - OVN_ENCAP_IP=192.168.100.10
-      - OVN_ENCAP_TYPE=geneve
-    healthcheck:
-      test: ["CMD", "/healthcheck.sh"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    depends_on:
-      ovn-central:
-        condition: service_healthy
-    labels:
-      - "ovs-lab=true"
-      - "component=data-plane"
-      - "vpc=a"
+  # OVS runs on the host VM, not in containers
+  # This simplifies networking and avoids Docker bridge issues
 
-  # VPC-B OVS Instance
-  ovs-vpc-b:
-    build: ./ovs-container
-    container_name: ovs-vpc-b
-    hostname: ovs-vpc-b
-    restart: unless-stopped
-    privileged: true
-    ports:
-      - "9477:9475"  # OVS exporter metrics
-    networks:
-      vpc-b-internal:
-        ipv4_address: 192.168.20.2
-      transit-overlay:
-        ipv4_address: 192.168.100.20
-    volumes:
-      - ovs-vpc-b-run:/var/run/openvswitch
-      - ovs-vpc-b-lib:/var/lib/openvswitch
-      - ovs-vpc-b-logs:/var/log/openvswitch
-      - ovs-vpc-b-etc:/etc/openvswitch
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-      - SYS_NICE
-    environment:
-      - OVS_BRIDGE_NAME=br-vpc-b
-      - OVS_BRIDGE_IP=10.1.99.1/24
-      - OVN_REMOTE=tcp:192.168.100.5:6642
-      - OVN_ENCAP_IP=192.168.100.20
-      - OVN_ENCAP_TYPE=geneve
-    healthcheck:
-      test: ["CMD", "/healthcheck.sh"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    depends_on:
-      ovn-central:
-        condition: service_healthy
-    labels:
-      - "ovs-lab=true"
-      - "component=data-plane"
-      - "vpc=b"
-
-  # VPC-A Router (FRR)
-  vrouter-vpc-a:
-    build: ./frr-router
-    container_name: vrouter-vpc-a
-    hostname: vrouter-vpc-a
-    privileged: true
-    networks:
-      vpc-a-internal:
-        ipv4_address: 192.168.10.250
-      transit-overlay:
-        ipv4_address: 192.168.100.101
-    ports:
-      - "9101:9100"  # Node exporter metrics
-    environment:
-      - ROUTER_ID=10.0.0.1
-      - ROUTER_NAME=vrouter-vpc-a
-      - INTERFACES=eth0 eth1
-    cap_add:
-      - NET_ADMIN
-      - SYS_ADMIN
-    sysctls:
-      - net.ipv4.ip_forward=1
-      - net.ipv4.conf.all.rp_filter=0
-      - net.ipv4.conf.default.rp_filter=0
-    labels:
-      - "ovs-lab=true"
-      - "component=routing"
-      - "vpc=a"
-
-  # VPC-B Router (FRR)
-  vrouter-vpc-b:
-    build: ./frr-router
-    container_name: vrouter-vpc-b
-    hostname: vrouter-vpc-b
-    privileged: true
-    networks:
-      vpc-b-internal:
-        ipv4_address: 192.168.20.250
-      transit-overlay:
-        ipv4_address: 192.168.100.102
-    ports:
-      - "9102:9100"  # Node exporter metrics
-    environment:
-      - ROUTER_ID=10.1.0.1
-      - ROUTER_NAME=vrouter-vpc-b
-      - INTERFACES=eth0 eth1
-    cap_add:
-      - NET_ADMIN
-      - SYS_ADMIN
-    sysctls:
-      - net.ipv4.ip_forward=1
-      - net.ipv4.conf.all.rp_filter=0
-      - net.ipv4.conf.default.rp_filter=0
-    labels:
-      - "ovs-lab=true"
-      - "component=routing"
-      - "vpc=b"
 
   # Monitoring - Prometheus
   prometheus:
@@ -213,7 +78,142 @@ services:
       - "component=monitoring"
 
 
-  # Traffic Generator
+  # ==================== TEST CONTAINERS - VPC A ====================
+  
+  vpc-a-web:
+    image: alpine:latest
+    container_name: vpc-a-web
+    hostname: vpc-a-web
+    restart: unless-stopped
+    network_mode: none  # Will be connected to OVS
+    command: >
+      sh -c "
+        apk add --no-cache netcat-openbsd iperf3 curl wget >/dev/null 2>&1;
+        nc -l -k -p 80 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 443 < /dev/zero > /dev/null 2>&1 &
+        iperf3 -s -D;
+        sleep infinity
+      "
+    profiles:
+      - testing
+      - vpc
+    labels:
+      - "ovs-lab=true"
+      - "vpc=a"
+      - "tier=web"
+
+  vpc-a-app:
+    image: alpine:latest
+    container_name: vpc-a-app
+    hostname: vpc-a-app
+    restart: unless-stopped
+    network_mode: none  # Will be connected to OVS
+    command: >
+      sh -c "
+        apk add --no-cache netcat-openbsd iperf3 >/dev/null 2>&1;
+        nc -l -k -p 8080 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 8443 < /dev/zero > /dev/null 2>&1 &
+        iperf3 -s -D;
+        sleep infinity
+      "
+    profiles:
+      - testing
+      - vpc
+    labels:
+      - "ovs-lab=true"
+      - "vpc=a"
+      - "tier=app"
+
+  vpc-a-db:
+    image: alpine:latest
+    container_name: vpc-a-db
+    hostname: vpc-a-db
+    restart: unless-stopped
+    network_mode: none  # Will be connected to OVS
+    command: >
+      sh -c "
+        apk add --no-cache netcat-openbsd >/dev/null 2>&1;
+        nc -l -k -p 5432 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 3306 < /dev/zero > /dev/null 2>&1 &
+        sleep infinity
+      "
+    profiles:
+      - testing
+      - vpc
+    labels:
+      - "ovs-lab=true"
+      - "vpc=a"
+      - "tier=db"
+
+  # ==================== TEST CONTAINERS - VPC B ====================
+  
+  vpc-b-web:
+    image: alpine:latest
+    container_name: vpc-b-web
+    hostname: vpc-b-web
+    restart: unless-stopped
+    network_mode: none  # Will be connected to OVS
+    command: >
+      sh -c "
+        apk add --no-cache netcat-openbsd iperf3 curl wget >/dev/null 2>&1;
+        nc -l -k -p 80 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 443 < /dev/zero > /dev/null 2>&1 &
+        iperf3 -s -D;
+        sleep infinity
+      "
+    profiles:
+      - testing
+      - vpc
+    labels:
+      - "ovs-lab=true"
+      - "vpc=b"
+      - "tier=web"
+
+  vpc-b-app:
+    image: alpine:latest
+    container_name: vpc-b-app
+    hostname: vpc-b-app
+    restart: unless-stopped
+    network_mode: none  # Will be connected to OVS
+    command: >
+      sh -c "
+        apk add --no-cache netcat-openbsd iperf3 >/dev/null 2>&1;
+        nc -l -k -p 8080 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 8443 < /dev/zero > /dev/null 2>&1 &
+        iperf3 -s -D;
+        sleep infinity
+      "
+    profiles:
+      - testing
+      - vpc
+    labels:
+      - "ovs-lab=true"
+      - "vpc=b"
+      - "tier=app"
+
+  vpc-b-db:
+    image: alpine:latest
+    container_name: vpc-b-db
+    hostname: vpc-b-db
+    restart: unless-stopped
+    network_mode: none  # Will be connected to OVS
+    command: >
+      sh -c "
+        apk add --no-cache netcat-openbsd >/dev/null 2>&1;
+        nc -l -k -p 5432 < /dev/zero > /dev/null 2>&1 &
+        nc -l -k -p 3306 < /dev/zero > /dev/null 2>&1 &
+        sleep infinity
+      "
+    profiles:
+      - testing
+      - vpc
+    labels:
+      - "ovs-lab=true"
+      - "vpc=b"
+      - "tier=db"
+
+  # ==================== TRAFFIC GENERATION ====================
+
   traffic-generator:
     build: ./traffic-generator
     container_name: traffic-generator
@@ -223,25 +223,30 @@ services:
         ipv4_address: 192.168.100.200
     privileged: true
     volumes:
-      - ./traffic-generator/vpc-traffic-gen.py:/vpc-traffic-gen.py
+      - ./traffic-generator:/workspace
     command: sleep infinity
     labels:
       - "ovs-lab=true"
       - "component=testing"
+    profiles:
+      - traffic
+
+  # ==================== CHAOS ENGINEERING ====================
+
+  pumba:
+    image: gaiaadm/pumba:latest
+    container_name: pumba
+    restart: "no"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --help  # Default to help, will be overridden when running chaos
+    labels:
+      - "ovs-lab=true"
+      - "component=chaos"
+    profiles:
+      - chaos
 
 networks:
-  vpc-a-internal:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 192.168.10.0/24
-          gateway: 192.168.10.1
-  vpc-b-internal:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 192.168.20.0/24
-          gateway: 192.168.20.1
   transit-overlay:
     driver: bridge
     ipam:
@@ -252,13 +257,5 @@ networks:
 volumes:
   prometheus-data:
   grafana-data:
-  ovs-vpc-a-run:
-  ovs-vpc-a-lib:
-  ovs-vpc-a-logs:
-  ovs-vpc-a-etc:
-  ovs-vpc-b-run:
-  ovs-vpc-b-lib:
-  ovs-vpc-b-logs:
-  ovs-vpc-b-etc:
   ovn-nb-db:
   ovn-logs:

@@ -1,206 +1,314 @@
-# OVS Container Lab - Simplified Makefile
-# Multi-VPC Cloud Network Simulation with OVN/OVS
+# OVS Container Lab - Makefile
+# Control everything from macOS using Lima VM
 
-.PHONY: help up down status logs clean test demo stress chaos
+.PHONY: help up down status logs clean test build lima-start lima-ssh lima-stop lima-delete
 
 # Default target
 help:
-	@echo "OVS Container Lab - Multi-VPC Cloud Network Simulation"
-	@echo "======================================================"
+	@echo "OVS Container Lab - Lima VM Control"
+	@echo "===================================="
 	@echo ""
-	@echo "BASIC OPERATIONS:"
-	@echo "  make up         - Start entire VPC infrastructure"
-	@echo "  make down       - Stop all containers"  
-	@echo "  make status     - Show infrastructure status"
-	@echo "  make logs       - Follow container logs"
-	@echo "  make clean      - Remove all containers and volumes"
+	@echo "QUICK START:"
+	@echo "  make up         - Start Lima VM and entire stack"
+	@echo "  make status     - Show status of everything"
+	@echo "  make down       - Stop containers (VM stays running)"
+	@echo "  make clean      - Stop containers and delete VM"
 	@echo ""
-	@echo "TESTING & DEMOS:"
+	@echo "TESTING:"
+	@echo "  make test-start - Start test containers"
+	@echo "  make setup-ovn  - Setup OVN topology"
 	@echo "  make test       - Run connectivity tests"
-	@echo "  make demo       - Run 10-minute demo with traffic"
-	@echo "  make demo-full  - Run 30-minute comprehensive demo"
+	@echo "  make show-ovn   - Show OVN configuration"
+	@echo "  make test-full  - Start containers, setup OVN, and test"
+	@echo "  make setup-all  - Complete setup with everything"
 	@echo ""
-	@echo "STRESS TESTING:"
-	@echo "  make stress     - Run 2-minute stress test"
-	@echo "  make stress-heavy - Run 5-minute heavy stress test"
-	@echo "  make chaos      - Run chaos engineering scenarios"
+	@echo "TRAFFIC GENERATION:"
+	@echo "  make traffic-start - Start traffic generator container"
+	@echo "  make traffic-run   - Generate normal traffic"
+	@echo "  make traffic-heavy - Generate heavy traffic load"
+	@echo "  make traffic-stop  - Stop traffic generator"
+	@echo ""
+	@echo "CHAOS ENGINEERING:"
+	@echo "  make chaos      - Run network partition scenario"
+	@echo "  make chaos-loss - Simulate packet loss (20%)"
+	@echo "  make chaos-delay - Add network delay (100ms)"
+	@echo "  make chaos-kill - Kill random container"
+	@echo "  make chaos-pause - Pause random containers"
 	@echo ""
 	@echo "MONITORING:"
-	@echo "  make dashboard  - Open Grafana dashboard"
+	@echo "  make logs       - Follow container logs"
+	@echo "  make dashboard  - Open Grafana (http://localhost:3000)"
 	@echo "  make metrics    - Show current metrics"
 	@echo ""
 	@echo "DEVELOPMENT:"
-	@echo "  make shell-ovn  - Shell into OVN controller"
-	@echo "  make shell-ovs  - Shell into OVS container" 
-	@echo "  make build      - Rebuild all images"
+	@echo "  make lima-ssh   - SSH into the Lima VM"
+	@echo "  make shell-ovn  - Shell into OVN container"
+	@echo "  make shell-ovs  - Shell into OVS container"
+	@echo "  make build      - Rebuild container images"
 
-# ==================== BASIC OPERATIONS ====================
+# ==================== MAIN OPERATIONS ====================
 
-up:
-	@echo "Starting Multi-VPC Infrastructure..."
-	@docker compose up -d ovn-central
-	@sleep 5
-	@docker compose up -d ovs-vpc-a ovs-vpc-b
-	@sleep 5
-	@docker compose up -d vrouter-vpc-a vrouter-vpc-b
-	@sleep 3
-	@echo "Configuring OVN topology..."
-	@./scripts/setup-ovn-topology.sh
-	@echo "Configuring vRouter routing..."
-	@./scripts/setup-vrouters.sh
-	@echo "Setting up test workloads..."
-	@./scripts/setup-test-workloads.sh > /dev/null 2>&1
-	@docker compose up -d prometheus grafana
+setup-all: up traffic-start
 	@echo ""
-	@echo "✅ Infrastructure Ready!"
+	@echo "=========================================="
+	@echo "✅ Complete OVS Container Lab Setup Done!"
+	@echo "=========================================="
 	@echo ""
-	@echo "Access Points:"
+	@echo "Everything is running:"
+	@echo "  - OVN SDN Controller"
+	@echo "  - OVS bridges (VPC-A and VPC-B)"
+	@echo "  - Test containers attached to OVS"
+	@echo "  - Traffic generator ready"
+	@echo ""
+	@echo "Access points:"
+	@echo "  - Grafana: http://localhost:3000"
+	@echo "  - Prometheus: http://localhost:9090"
+	@echo ""
+	@echo "Next steps:"
+	@echo "  - make traffic-run    # Generate traffic"
+	@echo "  - make chaos-loss     # Simulate packet loss"
+	@echo "  - make status         # Check status"
+
+up: lima-start
+	@echo "🚀 Starting OVS Container Lab..."
+	@echo "Waiting for VM to be ready..."
+	@sleep 5
+	@echo "Starting core services..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose up -d prometheus grafana ovn-central"
+	@echo "Waiting for OVN to initialize..."
+	@sleep 10
+	@echo "Setting up OVN topology..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py setup" || true
+	@echo "Setting up OVS as OVN chassis..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py setup-chassis" || true
+	@echo "Starting test containers..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile testing --profile vpc up -d"
+	@sleep 5
+	@echo "Binding containers to OVN..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py bind-containers"
+	@echo ""
+	@echo "✅ Stack is running with proper SDN/OVN!"
+	@echo ""
+	@echo "Access from your Mac:"
 	@echo "  Grafana:    http://localhost:3000 (admin/admin)"
 	@echo "  Prometheus: http://localhost:9090"
-	@echo "  OVS Metrics: http://localhost:9475/metrics (VPC-A), http://localhost:9477/metrics (VPC-B)"
 	@echo ""
 	@echo "Run 'make test' to verify connectivity"
 
 down:
-	@echo "Stopping all containers..."
-	@docker compose down
-	@echo "Infrastructure stopped"
+	@echo "Stopping containers..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose down"
+	@echo "✅ Containers stopped (VM still running)"
+
+clean: down lima-delete
+	@echo "✅ Everything cleaned up"
 
 status:
-	@echo "=== Infrastructure Status ==="
+	@echo "=== VM Status ==="
+	@limactl list ovs-lab 2>/dev/null || echo "VM not created"
 	@echo ""
-	@echo "OVN Controller:"
-	@docker exec ovn-central ovn-nbctl show 2>/dev/null | head -10 || echo "  ❌ Not running"
+	@echo "=== Container Status ==="
+	@limactl shell ovs-lab -- sudo docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null || echo "VM not running"
 	@echo ""
-	@echo "OVS Instances:"
-	@docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "(ovs-vpc|ovn)" || echo "  None running"
-	@echo ""
-	@echo "vRouters:"
-	@docker ps --format "table {{.Names}}\t{{.Status}}" | grep vrouter || echo "  None running"
-	@echo ""
-	@echo "Inter-VPC Connectivity:"
-	@docker exec ovs-vpc-a ip netns exec vpc-a-web-1 ping -c 1 -W 1 10.1.1.10 >/dev/null 2>&1 && echo "  ✅ Working" || echo "  ❌ Not working"
+	@echo "=== OVS Status ==="
+	@limactl shell ovs-lab -- sudo ovs-vsctl show 2>/dev/null | head -20 || echo "OVS not available"
 
-logs:
-	@docker compose logs -f
+# ==================== LIMA CONTROL ====================
 
-clean:
-	@echo "Cleaning up all containers and volumes..."
-	@docker compose down -v --remove-orphans
-	@docker kill $$(docker ps -q --filter "label=ovs-lab") 2>/dev/null || true
-	@docker network prune -f
-	@echo "Cleanup complete"
+lima-start:
+	@if limactl list -q | grep -q "^ovs-lab$$"; then \
+		echo "Lima VM already exists, starting..."; \
+		limactl start ovs-lab; \
+		echo "Ensuring OVN packages are installed..."; \
+		limactl shell ovs-lab -- sudo DEBIAN_FRONTEND=noninteractive apt-get update; \
+		limactl shell ovs-lab -- sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" openvswitch-switch openvswitch-common python3-openvswitch ovn-host ovn-common; \
+		echo "Configuring OVS for OVN..."; \
+		limactl shell ovs-lab -- sudo ovs-vsctl set open_vswitch . external_ids:system-id=chassis-host; \
+		limactl shell ovs-lab -- sudo ovs-vsctl set open_vswitch . external_ids:ovn-encap-type=geneve; \
+		limactl shell ovs-lab -- sudo ovs-vsctl --may-exist add-br br-int; \
+		limactl shell ovs-lab -- sudo ovs-vsctl set bridge br-int fail-mode=secure; \
+		echo "OVN controller will be started when OVN central is ready..."; \
+		limactl shell ovs-lab -- sudo systemctl stop ovn-controller 2>/dev/null || true; \
+	else \
+		echo "Creating new Lima VM..."; \
+		limactl start --name=ovs-lab lima.yaml; \
+		echo "Waiting for VM provisioning to complete..."; \
+		sleep 15; \
+		echo "Installing OVS and OVN packages..."; \
+		limactl shell ovs-lab -- sudo DEBIAN_FRONTEND=noninteractive apt-get update; \
+		limactl shell ovs-lab -- sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" openvswitch-switch openvswitch-common python3-openvswitch ovn-host ovn-common; \
+		limactl shell ovs-lab -- sudo systemctl start openvswitch-switch; \
+	fi
+	@echo "Verifying OVS and OVN installation..."
+	@limactl shell ovs-lab -- which ovs-vsctl || (echo "ERROR: OVS not installed!" && exit 1)
+	@limactl shell ovs-lab -- which ovn-controller || (echo "ERROR: ovn-controller not installed!" && exit 1)
+	@limactl shell ovs-lab -- sudo ovs-vsctl --version
+	@limactl shell ovs-lab -- ovn-controller --version
 
-# ==================== TESTING & DEMOS ====================
+lima-ssh:
+	@limactl shell ovs-lab
+
+lima-stop:
+	@echo "Stopping Lima VM..."
+	@limactl stop ovs-lab
+
+lima-delete:
+	@echo "Deleting Lima VM..."
+	@limactl delete ovs-lab --force
+
+# ==================== TESTING ====================
+
+test-start:
+	@echo "Starting test containers..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile testing --profile vpc up -d"
+	@echo "Waiting for containers to start..."
+	@sleep 5
+	@echo "Binding containers to OVN..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py bind-containers"
+	@echo "Test containers ready with OVN networking"
+
+attach:
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py bind-containers"
 
 test:
-	@echo "Testing VPC connectivity..."
-	@echo ""
-	@echo "1. VPC-A internal (web to app):"
-	@docker exec ovs-vpc-a ip netns exec vpc-a-web-1 ping -c 2 -W 1 10.0.2.10 || echo "  ❌ Failed"
-	@echo ""
-	@echo "2. VPC-B internal (web to app):"
-	@docker exec ovs-vpc-b ip netns exec vpc-b-web-1 ping -c 2 -W 1 10.1.2.10 || echo "  ❌ Failed"
-	@echo ""
-	@echo "3. Inter-VPC routing (VPC-A to VPC-B):"
-	@docker exec ovs-vpc-a ip netns exec vpc-a-web-1 ping -c 2 -W 1 10.1.1.10 || echo "  ❌ Failed"
-	@echo ""
-	@echo "4. GENEVE tunnels:"
-	@docker exec ovs-vpc-a ovs-vsctl show | grep -c "type: geneve" | xargs -I {} echo "  {} tunnels active"
+	@echo "Running connectivity tests..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py test"
 
-demo:
-	@echo "Starting 10-minute demo..."
-	@./scripts/run-demo.sh standard
+setup-ovn:
+	@echo "Setting up OVN topology..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py setup"
 
-demo-full:
-	@echo "Starting 30-minute comprehensive demo..."
-	@./scripts/run-demo.sh comprehensive
+show-ovn:
+	@echo "Showing OVN topology..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py show"
 
-# ==================== STRESS TESTING ====================
-
-stress:
-	@echo "Running 2-minute stress test..."
-	@./scripts/stress-test.sh standard 120
-
-stress-heavy:
-	@echo "Running 5-minute heavy stress test..."
-	@./scripts/stress-test.sh heavy 300
+test-driver:
+	@echo "Testing Docker network driver..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py test-driver"
 
 chaos:
-	@echo "Select chaos scenario:"
-	@echo "  1) Packet Loss (30%)"
-	@echo "  2) CPU Stress"
-	@echo "  3) Memory Pressure"
-	@echo "  4) Network Partition"
-	@echo "  5) Cascading Failure"
-	@read -p "Enter choice [1-5]: " choice; \
-	./scripts/chaos-scenario.sh $$choice
+	@echo "Running chaos scenario..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py chaos --scenario network-partition --duration 30"
+
+test-full: test-start test
+
+# ==================== TRAFFIC GENERATION ====================
+
+traffic-start:
+	@echo "Starting traffic generator..."
+	@echo "Ensuring Docker is healthy..."
+	@limactl shell ovs-lab -- sudo systemctl restart docker 2>/dev/null || true
+	@sleep 3
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic build traffic-generator"
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic up -d traffic-generator"
+	@echo "Traffic generator ready. Use 'make traffic-run' to generate traffic"
+
+traffic-run:
+	@echo "Generating traffic between containers..."
+	@limactl shell ovs-lab -- sudo docker exec traffic-generator python3 /workspace/traffic-gen.py
+
+traffic-heavy:
+	@echo "Generating heavy traffic load..."
+	@limactl shell ovs-lab -- sudo docker exec traffic-generator bash -c "iperf3 -c 10.0.1.10 -t 60 -P 10"
+
+traffic-stop:
+	@echo "Stopping traffic generator..."
+	@limactl shell ovs-lab -- sudo docker compose --profile traffic down
+
+# ==================== CHAOS ENGINEERING ====================
+
+chaos-loss:
+	@echo "Simulating 20% packet loss on all containers..."
+	@limactl shell ovs-lab -- sudo docker run --rm -v /var/run/docker.sock:/var/run/docker.sock gaiaadm/pumba \
+		netem --duration 60s --tc-image gaiadocker/iproute2 loss --percent 20 re2:"^vpc-"
+
+chaos-delay:
+	@echo "Adding 100ms delay to all containers..."
+	@limactl shell ovs-lab -- sudo docker run --rm -v /var/run/docker.sock:/var/run/docker.sock gaiaadm/pumba \
+		netem --duration 60s --tc-image gaiadocker/iproute2 delay --time 100 re2:"^vpc-"
+
+chaos-kill:
+	@echo "Randomly killing a container..."
+	@limactl shell ovs-lab -- sudo docker run --rm -v /var/run/docker.sock:/var/run/docker.sock gaiaadm/pumba \
+		kill --signal SIGKILL re2:"^vpc-.*-web"
+
+chaos-pause:
+	@echo "Pausing random containers for 30s..."
+	@limactl shell ovs-lab -- sudo docker run --rm -v /var/run/docker.sock:/var/run/docker.sock gaiaadm/pumba \
+		pause --duration 30s re2:"^vpc-"
 
 # ==================== MONITORING ====================
 
+logs:
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose logs -f"
+
+logs-ovs:
+	@limactl shell ovs-lab -- sudo docker logs -f ovs-vpc-a
+
+logs-ovn:
+	@limactl shell ovs-lab -- sudo docker logs -f ovn-central
+
 dashboard:
 	@echo "Opening Grafana dashboard..."
-	@open http://localhost:3000 2>/dev/null || \
-	 xdg-open http://localhost:3000 2>/dev/null || \
-	 echo "Open: http://localhost:3000 (admin/admin)"
+	@open http://localhost:3000 2>/dev/null || echo "Open: http://localhost:3000"
 
 metrics:
 	@echo "=== Current Metrics ==="
-	@echo ""
-	@echo "OVN Statistics:"
-	@curl -s http://localhost:9476/metrics | grep "ovn_" | head -5
-	@echo ""
-	@echo "Traffic Rates:"
-	@curl -s http://localhost:9476/metrics | grep "ovs_interface_rx_packets" | head -5
-	@echo ""
-	@echo "Active Flows:"
-	@curl -s http://localhost:9476/metrics | grep "ovs_flow_count"
+	@curl -s http://localhost:9475/metrics | grep "ovs_" | head -10
 
 # ==================== DEVELOPMENT ====================
 
+build:
+	@echo "Building container images..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose build"
+
 shell-ovn:
-	@docker exec -it ovn-central bash
+	@limactl shell ovs-lab -- sudo docker exec -it ovn-central bash
 
 shell-ovs:
-	@docker exec -it ovs-vpc-a bash
+	@limactl shell ovs-lab -- sudo docker exec -it ovs-vpc-a bash
 
-shell-router:
-	@docker exec -it vrouter-vpc-a bash
-
-build:
-	@echo "Building all images..."
-	@docker compose build
-	@echo "Build complete"
+shell-vm:
+	@limactl shell ovs-lab
 
 # ==================== ADVANCED ====================
 
-.PHONY: stop start restart watch-traffic watch-flows debug
-
-stop:
-	@docker compose stop
-
-start:
-	@docker compose start
+watch-traffic:
+	@watch -n2 'curl -s http://localhost:9475/metrics | grep -E "ovs_interface_(rx|tx)_packets" | head -10'
 
 restart: down up
 
-watch-traffic:
-	@watch -n1 'curl -s http://localhost:9476/metrics | grep -E "ovs_interface_(rx|tx)_packets" | head -10'
+rebuild: build up
 
-watch-flows:
-	@docker exec ovs-vpc-a watch -n1 'ovs-ofctl dump-flows br-vpc-a | grep n_packets'
+# Quick VM restart
+restart-vm: lima-stop lima-start
 
-debug:
-	@echo "=== Debug Information ==="
+# Full reset
+reset: clean up
+
+.PHONY: info
+info:
+	@echo "Project: OVS Container Lab"
+	@echo "VM Type: Lima (using macOS native virtualization)"
 	@echo ""
-	@echo "OVN Northbound DB:"
-	@docker exec ovn-central ovn-nbctl show
+	@echo "Port Forwards:"
+	@echo "  3000 -> 3000  (Grafana)"
+	@echo "  9090 -> 9090  (Prometheus)"
+	@echo "  9475 -> 9475  (OVS Exporter)"
+	@echo "  6641 -> 6641  (OVN NB)"
+	@echo "  6642 -> 6642  (OVN SB)"
 	@echo ""
-	@echo "OVN Southbound DB:"
-	@docker exec ovn-central ovn-sbctl show
-	@echo ""
-	@echo "OVS-VPC-A Bridges:"
-	@docker exec ovs-vpc-a ovs-vsctl show
-	@echo ""
-	@echo "vRouter-A Routes:"
-	@docker exec vrouter-vpc-a ip route | grep -E "10\."
+	@echo "VM Management:"
+	@echo "  limactl list          # List VMs"
+	@echo "  limactl shell ovs-lab # SSH into VM"
+	@echo "  limactl stop ovs-lab  # Stop VM"
+
+# Install Lima if not present
+.PHONY: install-lima
+install-lima:
+	@if ! command -v limactl &> /dev/null; then \
+		echo "Installing Lima..."; \
+		brew install lima; \
+	else \
+		echo "Lima is already installed"; \
+	fi

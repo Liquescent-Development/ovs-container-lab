@@ -1,0 +1,40 @@
+{
+  "description": "OVN Docker Network Plugin",
+  "documentation": "https://github.com/ovn-org/ovn",
+  "workdir": "/",
+  "entrypoint": ["/usr/local/bin/ovn-docker-overlay-driver"],
+  "network": {
+    "type": "host"
+  },
+  "linux": {
+    "capabilities": ["CAP_NET_ADMIN", "CAP_SYS_MODULE", "CAP_SYS_NICE"],
+    "devices": [
+      {
+        "name": "/dev/net/tun",
+        "path": "/dev/net/tun"
+      }
+    ]
+  },
+  "mounts": [
+    {
+      "type": "bind",
+      "source": "/var/run/docker.sock",
+      "destination": "/var/run/docker.sock",
+      "options": ["rbind"]
+    }
+  ],
+  "env": [
+    {
+      "name": "OVN_NB",
+      "value": "tcp://ovn-central:6641"
+    },
+    {
+      "name": "OVN_SB",
+      "value": "tcp://ovn-central:6642"
+    }
+  ],
+  "interface": {
+    "types": ["docker.networkdriver/1.0"],
+    "socket": "ovn.sock"
+  }
+}

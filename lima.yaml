@@ -1,0 +1,184 @@
+# Lima configuration for OVS Container Lab
+# Lighter alternative to Vagrant/VirtualBox using macOS native virtualization
+
+# IMPORTANT: Using Ubuntu 24.04 to match OVN container for OVS/OVN version compatibility
+# VM configuration - supports both Intel and Apple Silicon
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+
+cpus: 2
+memory: "4GiB"
+disk: "20GiB"
+
+# Network configuration - using default (no socket_vmnet required)
+# networks are configured automatically by Lima
+
+# Port forwarding from VM to macOS host
+portForwards:
+  - guestPort: 3000
+    hostPort: 3000    # Grafana
+  - guestPort: 9090
+    hostPort: 9090    # Prometheus
+  - guestPort: 9100
+    hostPort: 9100    # Node Exporter
+  - guestPort: 9475
+    hostPort: 9475    # OVS Exporter
+  - guestPort: 6641
+    hostPort: 6641    # OVN Northbound
+  - guestPort: 6642
+    hostPort: 6642    # OVN Southbound
+  - guestPort: 8080
+    hostPort: 8080    # cAdvisor
+
+# Mount the project directory
+mounts:
+  - location: "~"
+    mountPoint: "/home/lima"
+    writable: true
+
+# Provision script - runs on first boot
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -e
+
+      echo "🚀 Setting up OVS Container Lab environment..."
+
+      # Update system
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+
+      # Install dependencies
+      apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+        curl \
+        git \
+        make \
+        net-tools \
+        jq \
+        python3-pip
+
+      # Install Docker
+      if ! command -v docker &> /dev/null; then
+        curl -fsSL https://get.docker.com | bash
+        usermod -aG docker lima
+        systemctl enable docker
+      fi
+
+      # Ensure Docker networking is properly initialized
+      modprobe bridge || true
+      modprobe br_netfilter || true
+
+      # Start Docker and ensure docker0 bridge is created
+      systemctl start docker
+      sleep 5
+
+      # Force recreation of docker0 if it doesn't exist
+      if ! ip link show docker0 &> /dev/null; then
+        systemctl restart docker
+        sleep 5
+      fi
+
+      # Verify Docker is working
+      docker ps &> /dev/null || systemctl restart docker
+
+      # Install Docker Compose
+      if ! docker compose version &> /dev/null; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" docker-compose-plugin
+      fi
+
+      # Update package lists to ensure we get the latest OVS/OVN versions
+      echo "Updating package lists..."
+      DEBIAN_FRONTEND=noninteractive apt-get update
+
+      # Install OVS and OVN with all utilities
+      echo "Installing OVS and OVN packages..."
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+        openvswitch-switch \
+        openvswitch-common \
+        python3-openvswitch \
+        ovn-host \
+        ovn-common || {
+        echo "Failed to install OVS/OVN, retrying..."
+        DEBIAN_FRONTEND=noninteractive apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+          openvswitch-switch openvswitch-common python3-openvswitch ovn-host ovn-common
+      }
+
+      # Start OVS
+      systemctl enable openvswitch-switch
+      systemctl start openvswitch-switch
+
+      # Configure OVS for OVN (will be used when ovn-controller starts)
+      # Note: We'll set the actual OVN central IP later when containers are up
+      # For now, just set defaults that will be updated
+      ovs-vsctl set open_vswitch . external_ids:system-id=chassis-host
+      ovs-vsctl set open_vswitch . external_ids:ovn-encap-type=geneve
+
+      # Create OVN integration bridge
+      ovs-vsctl --may-exist add-br br-int
+      ovs-vsctl set bridge br-int fail-mode=secure
+
+      # Don't start ovn-controller yet - will be configured and started by orchestrator
+      systemctl stop ovn-controller || true
+      systemctl disable ovn-controller || true
+      echo "OVS configured for OVN (ovn-controller will be started after OVN central is ready)"
+
+      # Load kernel module
+      modprobe openvswitch || true
+
+      # Don't create bridges manually - OVN will manage br-int
+      # Just ensure OVS is ready for OVN integration
+      echo "OVS ready for OVN integration"
+
+      # Make ovs-docker available in PATH
+      if [ -f /usr/share/openvswitch/scripts/ovs-docker ]; then
+        ln -sf /usr/share/openvswitch/scripts/ovs-docker /usr/local/bin/ovs-docker
+        chmod +x /usr/local/bin/ovs-docker
+      fi
+
+      # Verify OVS is installed
+      which ovs-vsctl || {
+        echo "ERROR: OVS installation failed!"
+        exit 1
+      }
+
+      echo "✅ Environment ready!"
+
+  - mode: user
+    script: |
+      #!/bin/bash
+      # Add user to docker group
+      sudo usermod -aG docker $USER
+
+      # Enable passwordless sudo for the user
+      echo "$USER ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/$USER > /dev/null
+
+      echo ""
+      echo "=========================================="
+      echo "✅ Lima VM is ready!"
+      echo ""
+      echo "Access the VM with: limactl shell ovs-lab"
+      echo "Or use: make lima-ssh"
+      echo ""
+      echo "Project directory: ~/code/ovs-container-lab"
+      echo "=========================================="
+
+# Environment variables
+env:
+  DOCKER_HOST: unix:///var/run/docker.sock
+
+# SSH config
+ssh:
+  forwardAgent: false
+
+# Additional probe for readiness
+probes:
+  - description: "Docker is running"
+    script: |
+      #!/bin/bash
+      systemctl is-active docker
+    hint: Docker is not running. Check with "limactl shell ovs-lab sudo systemctl status docker"
