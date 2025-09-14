@@ -155,22 +155,22 @@
       "pluginVersion": "7.5.7",
       "targets": [
         {
-          "expr": "rate(ovs_interface_rx_packets_total{vpc=\"vpc-a\"}[1m])",
+          "expr": "rate(ovs_interface_rx_packets{vpc=\"vpc-a\"}[1m])",
           "legendFormat": "VPC-A {{interface}} RX",
           "refId": "A"
         },
         {
-          "expr": "rate(ovs_interface_tx_packets_total{vpc=\"vpc-a\"}[1m])",
+          "expr": "rate(ovs_interface_tx_packets{vpc=\"vpc-a\"}[1m])",
           "legendFormat": "VPC-A {{interface}} TX",
           "refId": "B"
         },
         {
-          "expr": "rate(ovs_interface_rx_packets_total{vpc=\"vpc-b\"}[1m])",
+          "expr": "rate(ovs_interface_rx_packets{vpc=\"vpc-b\"}[1m])",
           "legendFormat": "VPC-B {{interface}} RX",
           "refId": "C"
         },
         {
-          "expr": "rate(ovs_interface_tx_packets_total{vpc=\"vpc-b\"}[1m])",
+          "expr": "rate(ovs_interface_tx_packets{vpc=\"vpc-b\"}[1m])",
           "legendFormat": "VPC-B {{interface}} TX",
           "refId": "D"
         }
@@ -339,12 +339,12 @@
       "pluginVersion": "7.5.7",
       "targets": [
         {
-          "expr": "rate(ovs_interface_rx_dropped_total[1m]) / rate(ovs_interface_rx_packets_total[1m]) * 100",
+          "expr": "rate(ovs_interface_rx_dropped[1m]) / rate(ovs_interface_rx_packets[1m]) * 100",
           "legendFormat": "{{vpc}} {{interface}} RX Drop %",
           "refId": "A"
         },
         {
-          "expr": "rate(ovs_interface_tx_dropped_total[1m]) / rate(ovs_interface_tx_packets_total[1m]) * 100",
+          "expr": "rate(ovs_interface_tx_dropped[1m]) / rate(ovs_interface_tx_packets[1m]) * 100",
           "legendFormat": "{{vpc}} {{interface}} TX Drop %",
           "refId": "B"
         }
@@ -562,22 +562,22 @@
       "pluginVersion": "7.5.7",
       "targets": [
         {
-          "expr": "sum(rate(ovs_interface_rx_errors_total[1m]))",
+          "expr": "sum(rate(ovs_interface_rx_errors[1m]))",
           "legendFormat": "RX Errors",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(ovs_interface_tx_errors_total[1m]))",
+          "expr": "sum(rate(ovs_interface_tx_errors[1m]))",
           "legendFormat": "TX Errors",
           "refId": "B"
         },
         {
-          "expr": "sum(rate(ovs_interface_rx_dropped_total[1m]))",
+          "expr": "sum(rate(ovs_interface_rx_dropped[1m]))",
           "legendFormat": "RX Drops",
           "refId": "C"
         },
         {
-          "expr": "sum(rate(ovs_interface_tx_dropped_total[1m]))",
+          "expr": "sum(rate(ovs_interface_tx_dropped[1m]))",
           "legendFormat": "TX Drops",
           "refId": "D"
         }
@@ -588,12 +588,7 @@
   ],
   "schemaVersion": 27,
   "style": "dark",
-  "tags": [
-    "ovs",
-    "vpc",
-    "sdn",
-    "ovn"
-  ],
+  "tags": ["ovs", "vpc", "sdn", "ovn"],
   "templating": {
     "list": []
   },

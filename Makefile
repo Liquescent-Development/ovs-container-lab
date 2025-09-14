@@ -23,10 +23,12 @@ help:
 	@echo "  make setup-all  - Complete setup with everything"
 	@echo ""
 	@echo "TRAFFIC GENERATION:"
-	@echo "  make traffic-start - Start traffic generator container"
-	@echo "  make traffic-run   - Generate normal traffic"
-	@echo "  make traffic-heavy - Generate heavy traffic load"
-	@echo "  make traffic-stop  - Stop traffic generator"
+	@echo "  make traffic-start   - Start traffic generator container"
+	@echo "  make traffic-run     - Generate standard traffic"
+	@echo "  make traffic-heavy   - Generate heavy traffic load"
+	@echo "  make traffic-extreme - Generate extreme traffic (max load)"
+	@echo "  make traffic-chaos   - 🔥 CHAOS mode with packet corruption"
+	@echo "  make traffic-stop    - Stop all traffic generation"
 	@echo ""
 	@echo "CHAOS ENGINEERING:"
 	@echo "  make chaos      - Run network partition scenario"
@@ -105,7 +107,7 @@ down:
 clean: down
 	@echo "✅ Containers cleaned up (VM preserved)"
 
-clean-all: down lima-delete
+clean-all: lima-delete
 	@echo "✅ Everything cleaned up including VM"
 
 status:
@@ -203,44 +205,59 @@ test-full: test-start test
 # ==================== TRAFFIC GENERATION ====================
 
 traffic-start:
-	@echo "Starting traffic generator..."
+	@echo "Starting traffic generators..."
 	@echo "Ensuring Docker is healthy..."
 	@limactl shell ovs-lab -- sudo systemctl restart docker 2>/dev/null || true
 	@sleep 3
-	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic build traffic-generator"
-	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic up -d traffic-generator"
-	@echo "Connecting traffic generator to OVN transit network..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic build"
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic up -d"
+	@echo "Connecting traffic generators to VPC test subnets..."
 	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py bind-containers"
-	@echo "Traffic generator ready. Use 'make traffic-run' to generate traffic"
+	@echo "Traffic generators ready (traffic-gen-a in VPC-A, traffic-gen-b in VPC-B)"
+	@echo "Use 'make traffic-run' to generate traffic"
 
 traffic-run:
-	@echo "Generating multi-VPC traffic patterns..."
-	@echo "Starting traffic generator in background (it will run until stopped)..."
-	@limactl shell ovs-lab -- sudo docker exec -d traffic-generator python3 /workspace/multi-vpc-traffic-gen.py standard
-	@echo "Traffic is being generated. Check Grafana dashboards to see the traffic."
+	@echo "Generating standard traffic patterns to VPC containers..."
+	@echo "Starting controlled traffic generator..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py traffic start --mode standard"
+	@echo "Traffic is being generated to VPC-A and VPC-B containers. Check Grafana dashboards to see the traffic."
 	@echo "Use 'make traffic-status' to check status or 'make traffic-stop' to stop."
 
 traffic-status:
 	@echo "Checking traffic generator status..."
-	@limactl shell ovs-lab -- bash -c "sudo docker exec traffic-generator ps aux | grep -v grep | grep multi-vpc && echo 'Traffic generator is running' || echo 'Traffic generator is not running'"
+	@echo "Traffic Gen A (VPC-A):"
+	@limactl shell ovs-lab -- bash -c "sudo docker exec traffic-gen-a ps aux 2>/dev/null | grep -v grep | grep -E 'traffic-gen|iperf3|hping3' && echo '  ✓ Running' || echo '  ✗ Not running'"
+	@echo "Traffic Gen B (VPC-B):"
+	@limactl shell ovs-lab -- bash -c "sudo docker exec traffic-gen-b ps aux 2>/dev/null | grep -v grep | grep -E 'traffic-gen|iperf3|hping3' && echo '  ✓ Running' || echo '  ✗ Not running'"
 
 traffic-heavy:
-	@echo "Generating heavy traffic load..."
-	@limactl shell ovs-lab -- sudo docker exec traffic-generator python3 /workspace/multi-vpc-traffic-gen.py high
+	@echo "Generating heavy traffic load to VPC containers..."
+	@echo "Starting HIGH intensity traffic..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py traffic start --mode high"
+	@echo "Heavy traffic is being generated to VPC-A and VPC-B. Monitor impact in Grafana."
 
-traffic-overload:
-	@echo "Generating overload traffic (includes malformed packets)..."
-	@limactl shell ovs-lab -- sudo docker exec traffic-generator python3 /workspace/multi-vpc-traffic-gen.py overload
+traffic-extreme:
+	@echo "⚠️  WARNING: This mode is deprecated. Use 'make traffic-chaos' instead."
+	@echo "The extreme mode has been removed to prevent system hangs."
+	@echo "Use 'make traffic-heavy' for heavy load or 'make traffic-chaos' for controlled chaos."
+
+traffic-chaos:
+	@echo "🔥 CHAOS MODE - Controlled heavy traffic to VPC containers..."
+	@echo "WARNING: This will generate heavy traffic (rate limited to prevent system hang)!"
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py traffic start --mode chaos"
+	@echo "Controlled chaos traffic started to VPC-A and VPC-B. Monitor in Grafana."
 
 traffic-stop:
-	@echo "Stopping traffic generator processes..."
-	@limactl shell ovs-lab -- sudo docker exec traffic-generator pkill -f multi-vpc || true
-	@echo "Traffic generation stopped. Container is still running for future use."
+	@echo "Stopping all traffic generator processes..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py traffic stop"
+	@echo "All traffic generation stopped. Container is still running for future use."
 	@echo "Use 'make traffic-stop-container' to stop the container completely."
 
 traffic-stop-container:
 	@echo "Stopping traffic generator container..."
-	@limactl shell ovs-lab -- sudo docker compose --profile traffic down
+	@limactl shell ovs-lab -- sudo docker stop traffic-generator || true
+	@limactl shell ovs-lab -- sudo docker rm traffic-generator || true
+	@echo "Traffic generator container stopped and removed."
 
 # ==================== CHAOS ENGINEERING ====================
 

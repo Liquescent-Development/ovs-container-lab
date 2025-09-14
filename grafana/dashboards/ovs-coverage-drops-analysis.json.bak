@@ -267,7 +267,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(ovs_interface_rx_dropped_total[1m]) + rate(ovs_interface_tx_dropped_total[1m]))",
+          "expr": "sum(rate(ovs_interface_rx_dropped[1m]) + rate(ovs_interface_tx_dropped[1m]))",
           "refId": "A"
         }
       ],
@@ -368,11 +368,7 @@
       "id": 5,
       "options": {
         "legend": {
-          "calcs": [
-            "mean",
-            "max",
-            "lastNotNull"
-          ],
+          "calcs": ["mean", "max", "lastNotNull"],
           "displayMode": "table",
           "placement": "right",
           "showLegend": true
@@ -456,9 +452,7 @@
       "id": 6,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -471,12 +465,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "rate(ovs_interface_rx_dropped_total[5m])",
+          "expr": "rate(ovs_interface_rx_dropped[5m])",
           "refId": "A",
           "legendFormat": "RX Dropped - {{uuid}}"
         },
         {
-          "expr": "rate(ovs_interface_tx_dropped_total[5m])",
+          "expr": "rate(ovs_interface_tx_dropped[5m])",
           "refId": "B",
           "legendFormat": "TX Dropped - {{uuid}}"
         }
@@ -563,10 +557,7 @@
       "id": 7,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
+          "calcs": ["lastNotNull", "max"],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -579,22 +570,22 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "rate(ovs_interface_rx_crc_errors_total[5m])",
+          "expr": "rate(ovs_interface_rx_crc_err[5m])",
           "refId": "A",
           "legendFormat": "CRC Errors - {{uuid}}"
         },
         {
-          "expr": "rate(ovs_interface_rx_frame_errors_total[5m])",
+          "expr": "rate(ovs_interface_rx_frame_err[5m])",
           "refId": "B",
           "legendFormat": "Frame Errors - {{uuid}}"
         },
         {
-          "expr": "rate(ovs_interface_rx_overrun_errors_total[5m])",
+          "expr": "rate(ovs_interface_rx_over_err[5m])",
           "refId": "C",
           "legendFormat": "Overrun Errors - {{uuid}}"
         },
         {
-          "expr": "rate(ovs_interface_rx_missed_errors_total[5m])",
+          "expr": "rate(ovs_interface_rx_missed_errors[5m])",
           "refId": "D",
           "legendFormat": "Missed Errors - {{uuid}}"
         }
@@ -890,9 +881,7 @@
           "displayMode": "list",
           "placement": "right",
           "showLegend": true,
-          "values": [
-            "value"
-          ]
+          "values": ["value"]
         },
         "pieType": "pie",
         "reduceOptions": {
@@ -981,13 +970,7 @@
   "refresh": "5s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": [
-    "ovs",
-    "coverage",
-    "drops",
-    "errors",
-    "diagnostics"
-  ],
+  "tags": ["ovs", "coverage", "drops", "errors", "diagnostics"],
   "templating": {
     "list": [
       {

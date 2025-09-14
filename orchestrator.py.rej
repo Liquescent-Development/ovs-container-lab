@@ -1,0 +1,524 @@
+@@ -81,29 +61,27 @@
+         """Configure OVN logical topology for multi-VPC"""
+         logger.info("Setting up OVN topology...")
+ 
+-        # Create logical routers with tenant ownership
++        # Create logical routers
+         logger.info("Creating logical routers...")
+-        self._create_logical_router("lr-gateway", "External gateway router", tenant_id="shared")
+-        self._create_logical_router("lr-vpc-a", "VPC-A router", tenant_id="tenant-1", vpc_id="vpc-a")
+-        self._create_logical_router("lr-vpc-b", "VPC-B router", tenant_id="tenant-2", vpc_id="vpc-b")
++        self._create_logical_router("lr-gateway", "External gateway router")
++        self._create_logical_router("lr-vpc-a", "VPC-A router")
++        self._create_logical_router("lr-vpc-b", "VPC-B router")
+ 
+         # Create logical switches for each VPC tier
+         logger.info("Creating logical switches...")
+ 
+-        # VPC-A switches (Tenant 1)
+-        self._create_logical_switch("ls-vpc-a-web", "10.0.1.0/24", tenant_id="tenant-1", vpc_id="vpc-a", tier="web")
+-        self._create_logical_switch("ls-vpc-a-app", "10.0.2.0/24", tenant_id="tenant-1", vpc_id="vpc-a", tier="app")
+-        self._create_logical_switch("ls-vpc-a-db", "10.0.3.0/24", tenant_id="tenant-1", vpc_id="vpc-a", tier="db")
+-        self._create_logical_switch("ls-vpc-a-test", "10.0.4.0/24", tenant_id="tenant-1", vpc_id="vpc-a", tier="test")
++        # VPC-A switches
++        self._create_logical_switch("ls-vpc-a-web", "10.0.1.0/24")
++        self._create_logical_switch("ls-vpc-a-app", "10.0.2.0/24")
++        self._create_logical_switch("ls-vpc-a-db", "10.0.3.0/24")
+ 
+-        # VPC-B switches (Tenant 2)
+-        self._create_logical_switch("ls-vpc-b-web", "10.1.1.0/24", tenant_id="tenant-2", vpc_id="vpc-b", tier="web")
+-        self._create_logical_switch("ls-vpc-b-app", "10.1.2.0/24", tenant_id="tenant-2", vpc_id="vpc-b", tier="app")
+-        self._create_logical_switch("ls-vpc-b-db", "10.1.3.0/24", tenant_id="tenant-2", vpc_id="vpc-b", tier="db")
+-        self._create_logical_switch("ls-vpc-b-test", "10.1.4.0/24", tenant_id="tenant-2", vpc_id="vpc-b", tier="test")
++        # VPC-B switches
++        self._create_logical_switch("ls-vpc-b-web", "10.1.1.0/24")
++        self._create_logical_switch("ls-vpc-b-app", "10.1.2.0/24")
++        self._create_logical_switch("ls-vpc-b-db", "10.1.3.0/24")
+ 
+-        # Transit switch for inter-VPC routing (shared between tenants)
+-        self._create_logical_switch("ls-transit", "192.168.100.0/24", tenant_id="shared")
++        # Transit switch for inter-VPC routing
++        self._create_logical_switch("ls-transit", "192.168.100.0/24")
+ 
+         # Connect routers to switches
+         logger.info("Connecting routers to switches...")
+@@ -153,98 +129,42 @@
+                 else:
+                     raise
+ 
+-        # Configure external connectivity for gateway router
+-        self._setup_external_connectivity()
+-
+         logger.info("OVN topology setup complete")
+ 
+         # Create test containers if requested
+         if create_containers:
+             self.create_test_containers()
+ 
+-    def _create_logical_router(self, name: str, comment: str = "", tenant_id: str = "", vpc_id: str = ""):
+-        """Create a logical router if it doesn't exist with tenant tracking"""
++    def _create_logical_router(self, name: str, comment: str = ""):
++        """Create a logical router if it doesn't exist"""
+         try:
+             existing = self.run_nbctl(["lr-list"])
+             if name not in existing:
+                 self.run_nbctl(["lr-add", name])
+-
+-                # Set external IDs for tenant tracking
+-                external_ids = []
+                 if comment:
+-                    external_ids.append(f"comment=\"{comment}\"")
+-                if tenant_id:
+-                    external_ids.append(f"tenant-id={tenant_id}")
+-                if vpc_id:
+-                    external_ids.append(f"vpc-id={vpc_id}")
+-
+-                if external_ids:
+-                    for ext_id in external_ids:
+-                        self.run_nbctl(["set", "logical_router", name, f"external_ids:{ext_id}"])
+-
+-                logger.info(f"Created logical router: {name} (tenant: {tenant_id or 'shared'})")
++                    self.run_nbctl(["set", "logical_router", name, f"external_ids:comment=\"{comment}\""])
++                logger.info(f"Created logical router: {name}")
+             else:
+                 logger.debug(f"Logical router {name} already exists")
+         except Exception as e:
+             logger.error(f"Failed to create logical router {name}: {e}")
+             raise
+ 
+-    def _create_logical_switch(self, name: str, subnet: str = "", tenant_id: str = "", vpc_id: str = "", tier: str = ""):
+-        """Create a logical switch if it doesn't exist with tenant tracking"""
++    def _create_logical_switch(self, name: str, subnet: str = ""):
++        """Create a logical switch if it doesn't exist"""
+         try:
+             existing = self.run_nbctl(["ls-list"])
+             if name not in existing:
+                 self.run_nbctl(["ls-add", name])
+                 if subnet:
+                     self.run_nbctl(["set", "logical_switch", name, f"other_config:subnet=\"{subnet}\""])
+-
+-                # Set external IDs for tenant tracking
+-                if tenant_id:
+-                    self.run_nbctl(["set", "logical_switch", name, f"external_ids:tenant-id={tenant_id}"])
+-                if vpc_id:
+-                    self.run_nbctl(["set", "logical_switch", name, f"external_ids:vpc-id={vpc_id}"])
+-                if tier:
+-                    self.run_nbctl(["set", "logical_switch", name, f"external_ids:tier={tier}"])
+-
+-                logger.info(f"Created logical switch: {name} ({subnet}) [tenant: {tenant_id or 'shared'}]")
++                logger.info(f"Created logical switch: {name} ({subnet})")
+             else:
+                 logger.debug(f"Logical switch {name} already exists")
+         except Exception as e:
+             logger.error(f"Failed to create logical switch {name}: {e}")
+             raise
+ 
+-    def _setup_external_connectivity(self):
+-        """Configure external connectivity through NAT Gateway container"""
+-        logger.info("Configuring external connectivity through NAT Gateway...")
+-
+-        try:
+-            # Create OVN logical switch port for NAT Gateway on transit network
+-            port_name = "ls-transit-nat-gateway"
+-            existing_ports = self.run_nbctl(["lsp-list", "ls-transit"])
+-            if port_name not in existing_ports:
+-                # Use dynamic MAC address
+-                self.run_nbctl(["lsp-add", "ls-transit", port_name])
+-                self.run_nbctl(["lsp-set-addresses", port_name, "dynamic 192.168.100.254"])
+-                # Disable port security to allow routing of VPC traffic
+-                self.run_nbctl(["lsp-set-port-security", port_name, ""])
+-                logger.info(f"Created OVN port for NAT Gateway: {port_name}")
+-
+-            # Add default route on gateway router to NAT Gateway
+-            try:
+-                existing_routes = self.run_nbctl(["lr-route-list", "lr-gateway"])
+-                if "0.0.0.0/0" not in existing_routes:
+-                    # Route all external traffic to NAT Gateway container
+-                    self.run_nbctl(["lr-route-add", "lr-gateway", "0.0.0.0/0", "192.168.100.254"])
+-                    logger.info("Added default route to NAT Gateway (192.168.100.254)")
+-            except subprocess.CalledProcessError as e:
+-                logger.warning(f"Failed to add default route: {e}")
+-
+-            logger.info("External connectivity configured through NAT Gateway")
+-
+-        except Exception as e:
+-            logger.error(f"Failed to setup external connectivity: {e}")
+-            logger.warning("Continuing without external connectivity")
+-
+     def _connect_router_to_switch(self, router: str, switch: str, ip: str, mac: str):
+         """Connect a logical router to a logical switch"""
+         try:
+@@ -293,37 +213,93 @@
+         logger.info("Test containers ready. Use 'ovs-docker' to attach them to OVS bridges")
+         return True
+ 
++    # Removed old broken create_test_containers_old function that tried to use non-existent Docker network driver
++        """DEPRECATED: Create test containers in each VPC subnet using Docker networks"""
++        logger.info("Creating Docker networks and test containers...")
++
++        # First, create Docker networks via OVN driver
++        net_mgr = DockerNetworkManager()
++
++        # Define networks and containers
++        networks = [
++            # VPC-A networks
++            {"name": "vpc-a-web", "subnet": "10.0.1.0/24", "gateway": "10.0.1.1", "vpc": "a"},
++            {"name": "vpc-a-app", "subnet": "10.0.2.0/24", "gateway": "10.0.2.1", "vpc": "a"},
++            {"name": "vpc-a-db", "subnet": "10.0.3.0/24", "gateway": "10.0.3.1", "vpc": "a"},
++
++            # VPC-B networks
++            {"name": "vpc-b-web", "subnet": "10.1.1.0/24", "gateway": "10.1.1.1", "vpc": "b"},
++            {"name": "vpc-b-app", "subnet": "10.1.2.0/24", "gateway": "10.1.2.1", "vpc": "b"},
++            {"name": "vpc-b-db", "subnet": "10.1.3.0/24", "gateway": "10.1.3.1", "vpc": "b"},
++        ]
++
++        # Create Docker networks
++        logger.info("Creating Docker networks via OVN driver...")
++        for net in networks:
++            if net_mgr.create_network(net["name"], net["subnet"], net["gateway"], net["vpc"]):
++                logger.info(f"Created network: {net['name']}")
++            else:
++                logger.warning(f"Failed to create network: {net['name']}")
++
++        # Define containers for each network
++        containers = [
++            # VPC-A containers
++            {"name": "vpc-a-web-1", "network": "vpc-a-web", "image": "alpine:latest"},
++            {"name": "vpc-a-web-2", "network": "vpc-a-web", "image": "alpine:latest"},
++            {"name": "vpc-a-app-1", "network": "vpc-a-app", "image": "alpine:latest"},
++            {"name": "vpc-a-app-2", "network": "vpc-a-app", "image": "alpine:latest"},
++            {"name": "vpc-a-db-1", "network": "vpc-a-db", "image": "alpine:latest"},
++
++            # VPC-B containers
++            {"name": "vpc-b-web-1", "network": "vpc-b-web", "image": "alpine:latest"},
++            {"name": "vpc-b-web-2", "network": "vpc-b-web", "image": "alpine:latest"},
++            {"name": "vpc-b-app-1", "network": "vpc-b-app", "image": "alpine:latest"},
++            {"name": "vpc-b-app-2", "network": "vpc-b-app", "image": "alpine:latest"},
++            {"name": "vpc-b-db-1", "network": "vpc-b-db", "image": "alpine:latest"},
++        ]
+ 
+-    def get_tenant_from_vpc(self, vpc_name: str) -> str:
+-        """Get tenant ID from VPC name"""
+-        # Special handling for traffic generators
+-        if vpc_name.startswith("traffic-gen-"):
+-            vpc_letter = vpc_name.split('-')[-1]  # Get 'a' or 'b' from traffic-gen-a/b
+-            return self.tenant_mapping.get(f"vpc-{vpc_letter}", "unknown")
+-        vpc_id = vpc_name.split('-')[1] if '-' in vpc_name else vpc_name
+-        return self.tenant_mapping.get(f"vpc-{vpc_id}", "unknown")
++        # Create containers
++        logger.info("Creating test containers...")
++        for container in containers:
++            try:
++                # Remove container if it exists
++                subprocess.run(["docker", "rm", "-f", container["name"]],
++                             capture_output=True, text=True)
++
++                # Create container on OVN network
++                cmd = [
++                    "docker", "run", "-d",
++                    "--name", container["name"],
++                    "--hostname", container["name"],
++                    "--network", container["network"],
++                    "--label", f"vpc={container['name'].split('-')[1]}",
++                    "--label", f"tier={container['name'].split('-')[2]}",
++                    "--label", "ovs-lab=true",
++                    container["image"],
++                    "sh", "-c",
++                    "apk add --no-cache iproute2 iputils tcpdump iperf3 curl netcat-openbsd >/dev/null 2>&1; "
++                    "nc -l -k -p 80 </dev/null >/dev/null 2>&1 & "
++                    "nc -l -k -p 443 </dev/null >/dev/null 2>&1 & "
++                    "iperf3 -s -D >/dev/null 2>&1; "
++                    "sleep infinity"
++                ]
++
++                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
++
++                # Get container IP
++                cmd_ip = [
++                    "docker", "inspect", container["name"],
++                    "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"
++                ]
++                ip_result = subprocess.run(cmd_ip, capture_output=True, text=True)
++                ip = ip_result.stdout.strip()
++
++                logger.info(f"Created container: {container['name']} (IP: {ip})")
+ 
+-    def get_tenant_info(self, tenant_id: str) -> dict:
+-        """Get detailed tenant information"""
+-        return self.tenant_info.get(tenant_id, {})
++            except subprocess.CalledProcessError as e:
++                logger.error(f"Failed to create container {container['name']}: {e.stderr}")
+ 
+-    def set_port_tenant_ownership(self, port_name: str, tenant_id: str, vpc_id: str = ""):
+-        """Set tenant ownership on a logical switch port"""
+-        try:
+-            # Set external IDs for tenant tracking on the port
+-            self.run_nbctl(["set", "logical_switch_port", port_name, f"external_ids:tenant-id={tenant_id}"])
+-            if vpc_id:
+-                self.run_nbctl(["set", "logical_switch_port", port_name, f"external_ids:vpc-id={vpc_id}"])
+-
+-            # Add creation timestamp
+-            from datetime import datetime
+-            timestamp = datetime.utcnow().isoformat() + "Z"
+-            self.run_nbctl(["set", "logical_switch_port", port_name, f"external_ids:created-at={timestamp}"])
+-            self.run_nbctl(["set", "logical_switch_port", port_name, f"external_ids:created-by=orchestrator"])
+-
+-            logger.info(f"Set tenant ownership for port {port_name}: tenant={tenant_id}, vpc={vpc_id}")
+-        except Exception as e:
+-            logger.error(f"Failed to set tenant ownership for port {port_name}: {e}")
++        logger.info("Test containers created and connected via OVN")
+ 
+     def show_topology(self):
+         """Display current OVN topology"""
+@@ -335,84 +311,6 @@
+         print("\nNorthbound DB:")
+         print(self.run_nbctl(["show"]))
+ 
+-    def show_tenant_ownership(self):
+-        """Display tenant ownership information for all resources"""
+-        print("\n" + "="*60)
+-        print("TENANT OWNERSHIP INFORMATION")
+-        print("="*60)
+-
+-        # Show tenant info
+-        print("\nTenant Assignments:")
+-        for tenant_id, info in self.tenant_info.items():
+-            print(f"  {tenant_id}:")
+-            print(f"    Name: {info['name']}")
+-            print(f"    VPC: {info['vpc_id']}")
+-            print(f"    Billing ID: {info['billing_id']}")
+-            print(f"    Environment: {info['environment']}")
+-
+-        # Show logical routers with tenant ownership
+-        print("\nLogical Routers:")
+-        try:
+-            routers = self.run_nbctl(["lr-list"]).strip().split('\n')
+-            for router_line in routers:
+-                if router_line:
+-                    router_name = router_line.split()[1].strip('()')
+-                    try:
+-                        tenant_id = self.run_nbctl(["get", "logical_router", router_name, "external_ids:tenant-id"]).strip().strip('"')
+-                        vpc_id = self.run_nbctl(["get", "logical_router", router_name, "external_ids:vpc-id"]).strip().strip('"')
+-                        print(f"  {router_name}: tenant={tenant_id or 'none'}, vpc={vpc_id or 'none'}")
+-                    except:
+-                        print(f"  {router_name}: no tenant info")
+-        except Exception as e:
+-            logger.error(f"Failed to get router info: {e}")
+-
+-        # Show logical switches with tenant ownership
+-        print("\nLogical Switches:")
+-        try:
+-            switches = self.run_nbctl(["ls-list"]).strip().split('\n')
+-            for switch_line in switches:
+-                if switch_line:
+-                    switch_name = switch_line.split()[1].strip('()')
+-                    try:
+-                        tenant_id = self.run_nbctl(["get", "logical_switch", switch_name, "external_ids:tenant-id"]).strip().strip('"')
+-                        vpc_id = self.run_nbctl(["get", "logical_switch", switch_name, "external_ids:vpc-id"]).strip().strip('"')
+-                        tier = self.run_nbctl(["get", "logical_switch", switch_name, "external_ids:tier"]).strip().strip('"')
+-                        print(f"  {switch_name}: tenant={tenant_id or 'none'}, vpc={vpc_id or 'none'}, tier={tier or 'none'}")
+-                    except:
+-                        print(f"  {switch_name}: no tenant info")
+-        except Exception as e:
+-            logger.error(f"Failed to get switch info: {e}")
+-
+-        # Show OVS interfaces with tenant ownership
+-        print("\nOVS Interfaces:")
+-        try:
+-            result = subprocess.run(["sudo", "ovs-vsctl", "list", "interface"], capture_output=True, text=True)
+-            if result.returncode == 0:
+-                interfaces = result.stdout.split('\n\n')
+-                for interface in interfaces:
+-                    if 'veth' in interface:
+-                        lines = interface.split('\n')
+-                        name = ""
+-                        external_ids = {}
+-                        for line in lines:
+-                            if line.startswith('name'):
+-                                name = line.split(':')[1].strip().strip('"')
+-                            elif line.startswith('external_ids'):
+-                                ext_str = line.split(':', 1)[1].strip()
+-                                if ext_str != '{}':
+-                                    # Parse external_ids
+-                                    ext_str = ext_str.strip('{}')
+-                                    for pair in ext_str.split(', '):
+-                                        if '=' in pair:
+-                                            key, val = pair.split('=', 1)
+-                                            external_ids[key.strip('"')] = val.strip('"')
+-                        if name and 'tenant-id' in external_ids:
+-                            print(f"  {name}: tenant={external_ids.get('tenant-id', 'none')}, vpc={external_ids.get('vpc-id', 'none')}")
+-        except Exception as e:
+-            logger.error(f"Failed to get OVS interface info: {e}")
+-
+-        print("="*60)
+-
+     def setup_ovs_chassis(self):
+         """Configure host OVS to connect to OVN and start ovn-controller via systemd"""
+         logger.info("Setting up OVS as OVN chassis...")
+@@ -455,9 +353,6 @@
+             "--", "set", "bridge", "br-int", "datapath_type=netdev", "fail-mode=secure"
+         ], check=True)
+ 
+-        # No need for external bridge configuration when using NAT Gateway container
+-        logger.info("External connectivity will be handled by NAT Gateway container")
+-
+         # Clean up any stale chassis that might have been created by previous runs
+         logger.info("Cleaning up any stale chassis entries...")
+         try:
+@@ -608,17 +503,7 @@
+             try:
+                 self.run_nbctl(["lsp-add", switch_name, port_name])
+                 self.run_nbctl(["lsp-set-addresses", port_name, f"{mac_address} {ip_address}"])
+-
+-                # Set tenant ownership on the port
+-                tenant_id = self.get_tenant_from_vpc(container_name)
+-                # Special handling for traffic generators
+-                if container_name.startswith("traffic-gen-"):
+-                    vpc_id = f"vpc-{container_name.split('-')[-1]}"
+-                else:
+-                    vpc_id = f"vpc-{container_name.split('-')[1]}" if '-' in container_name else ""
+-                self.set_port_tenant_ownership(port_name, tenant_id, vpc_id)
+-
+-                logger.info(f"Created logical switch port {port_name} [tenant: {tenant_id}]")
++                logger.info(f"Created logical switch port {port_name}")
+             except subprocess.CalledProcessError as e:
+                 logger.error(f"Failed to create port: {e}")
+                 return
+@@ -638,11 +523,7 @@
+             return False
+ 
+         # Create veth pair and attach to container namespace
+-        # Use last 8 chars to avoid collision between traffic-gen-a and traffic-gen-b
+-        if container_name.startswith("traffic-gen"):
+-            veth_host = f"veth-tg-{container_name[-1]}"
+-        else:
+-            veth_host = f"veth-{container_name[:8]}"
++        veth_host = f"veth-{container_name[:8]}"
+         veth_cont = "eth1"
+ 
+         # Delete if exists
+@@ -677,122 +558,27 @@
+             # Port exists, just update external_ids
+             subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:iface-id={port_name}"], check=True)
+ 
+-        # Also set tenant ownership on the OVS interface
+-        tenant_id = self.get_tenant_from_vpc(container_name)
+-        subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:tenant-id={tenant_id}"], check=True)
+-        # Special handling for traffic generators
+-        if container_name.startswith("traffic-gen-"):
+-            vpc_id = f"vpc-{container_name.split('-')[-1]}"
+-        else:
+-            vpc_id = f"vpc-{container_name.split('-')[1]}" if '-' in container_name else ""
+-        if vpc_id:
+-            subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:vpc-id={vpc_id}"], check=True)
+-
+         subprocess.run(["sudo", "ip", "link", "set", veth_host, "up"], check=True)
+ 
+         logger.info(f"Container {container_name} bound to OVN port {port_name}")
+         return True
+ 
+-    def setup_nat_gateway_networking(self):
+-        """Setup NAT Gateway with proper networking for external connectivity"""
+-        logger.info("Setting up NAT Gateway networking...")
+-
+-        try:
+-            # 1. First ensure NAT Gateway container is running
+-            result = subprocess.run(["docker", "ps", "-q", "-f", "name=nat-gateway"],
+-                                  capture_output=True, text=True)
+-            if not result.stdout.strip():
+-                logger.info("Starting NAT Gateway container...")
+-                subprocess.run(["docker", "compose", "up", "-d", "nat-gateway"], check=True)
+-                time.sleep(3)
+-
+-            # 2. NAT Gateway already connected to bridge network via docker-compose
+-            logger.info("NAT Gateway already on bridge network for internet access")
+-
+-            # 3. Connect NAT Gateway to OVS/OVN for internal routing
+-            logger.info("Connecting NAT Gateway to OVN transit network...")
+-            # Use eth1 since eth0 is now the bridge network
+-            subprocess.run([
+-                "sudo", "/usr/bin/ovs-docker", "add-port", "br-int", "eth1",
+-                "nat-gateway", "--ipaddress=192.168.100.254/24"
+-            ], check=False)  # Ignore if already connected
+-
+-            # 4. Get the actual MAC address of the NAT Gateway interface
+-            logger.info("Getting NAT Gateway MAC address...")
+-            mac_result = subprocess.run([
+-                "docker", "exec", "nat-gateway", "ip", "link", "show", "eth1"
+-            ], capture_output=True, text=True)
+-
+-            nat_gateway_mac = None
+-            for line in mac_result.stdout.splitlines():
+-                if "link/ether" in line:
+-                    nat_gateway_mac = line.split()[1]
+-                    break
+-
+-            if nat_gateway_mac:
+-                # Update OVN with the actual MAC address
+-                logger.info(f"Updating OVN with NAT Gateway MAC: {nat_gateway_mac}")
+-                subprocess.run([
+-                    "docker", "exec", "ovn-central", "ovn-nbctl",
+-                    "lsp-set-addresses", "ls-transit-nat-gateway",
+-                    f"{nat_gateway_mac} 192.168.100.254"
+-                ], check=False)
+-
+-            # 5. Bind the OVN logical port to the physical interface
+-            logger.info("Binding NAT Gateway OVN port...")
+-            container_id = subprocess.run(["docker", "ps", "-q", "-f", "name=nat-gateway"],
+-                                        capture_output=True, text=True).stdout.strip()
+-            if container_id:
+-                # Find the actual interface name created by ovs-docker
+-                result = subprocess.run([
+-                    "sudo", "ovs-vsctl", "list-ports", "br-int"
+-                ], capture_output=True, text=True)
+-
+-                # Look for the interface that matches the container
+-                for port in result.stdout.splitlines():
+-                    # Check if this port belongs to nat-gateway
+-                    check_result = subprocess.run([
+-                        "sudo", "ovs-vsctl", "get", "interface", port, "external_ids:container_id"
+-                    ], capture_output=True, text=True)
+-                    if "nat-gateway" in check_result.stdout:
+-                        # This is our interface, bind it to OVN
+-                        subprocess.run([
+-                            "sudo", "ovs-vsctl", "set", "interface", port,
+-                            f"external_ids:iface-id=ls-transit-nat-gateway"
+-                        ], check=False)
+-                        logger.info(f"NAT Gateway port {port} bound to OVN")
+-                        break
+-
+-            # 6. Add routes in NAT Gateway for VPC subnets
+-            logger.info("Configuring NAT Gateway routes...")
+-            # Routes will be configured by entrypoint.sh
+-
+-            logger.info("NAT Gateway networking setup complete")
+-            return True
+-
+-        except Exception as e:
+-            logger.error(f"Failed to setup NAT Gateway networking: {e}")
+-            return False
+-
+     def setup_container_networking(self):
+         """Set up OVN networking for all test containers"""
+         logger.info("Setting up container networking via OVN...")
+ 
+-        # Setup NAT Gateway first
+-        self.setup_nat_gateway_networking()
+-
+         # Container to OVN switch mapping
+         container_config = [
+             # VPC-A containers
+             {"name": "vpc-a-web", "switch": "ls-vpc-a-web", "ip": "10.0.1.10"},
+             {"name": "vpc-a-app", "switch": "ls-vpc-a-app", "ip": "10.0.2.10"},
+             {"name": "vpc-a-db", "switch": "ls-vpc-a-db", "ip": "10.0.3.10"},
+-            {"name": "traffic-gen-a", "switch": "ls-vpc-a-test", "ip": "10.0.4.10"},
+             # VPC-B containers
+             {"name": "vpc-b-web", "switch": "ls-vpc-b-web", "ip": "10.1.1.10"},
+             {"name": "vpc-b-app", "switch": "ls-vpc-b-app", "ip": "10.1.2.10"},
+             {"name": "vpc-b-db", "switch": "ls-vpc-b-db", "ip": "10.1.3.10"},
+-            {"name": "traffic-gen-b", "switch": "ls-vpc-b-test", "ip": "10.1.4.10"},
++            # Traffic generator on transit network
++            {"name": "traffic-generator", "switch": "ls-transit", "ip": "192.168.100.200"},
+         ]
+ 
+         for config in container_config:

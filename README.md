@@ -1,17 +1,6 @@
 # OVS Container Lab
 
-**A Software-Defined Networking (SDN) lab** using Open vSwitch (OVS) data plane and Open Virtual Network (OVN) control plane, running in a Lima VM. Demonstrates enterprise multi-VPC cloud architectures with proper SDN - **no Linux iptables or routing**, everything is controlled by OVN.
-
-## Why Lima?
-
-Docker Desktop on macOS runs containers inside a VM, preventing direct network namespace manipulation. Lima provides:
-- ✅ **Lightweight** - Uses macOS native Virtualization.framework (no VirtualBox)
-- ✅ **Fast** - Much better performance than VirtualBox
-- ✅ **Full Linux kernel** with OVS kernel modules
-- ✅ **Direct network namespace access**
-- ✅ **Real veth pair creation** and manipulation
-- ✅ **Native container-to-OVS bridge** attachment
-- ✅ **Control everything from your Mac** via Make
+**A Software-Defined Networking (SDN) lab** using Open vSwitch (OVS) data plane and Open Virtual Network (OVN) control plane, running in a Lima VM. Demonstrates enterprise multi-VPC cloud architectures with full external connectivity - **complete SDN implementation** with NAT Gateway for internet access.
 
 ## Quick Start
 
@@ -28,8 +17,9 @@ make up
 # Check status
 make status
 
-# Test connectivity
+# Test connectivity (internal + external)
 make test
+# Tests VPC-to-VPC, intra-VPC, and internet connectivity
 
 # Access Grafana from your Mac
 open http://localhost:3000
@@ -79,13 +69,15 @@ This takes about 5 minutes on first run. Subsequent starts take only seconds.
 │  └────────────────────┬──────────────────────────────┘  │
 │                       │                                  │
 │  ┌──────────┐  ┌─────▼─────┐  ┌──────────┐            │
-│  │   OVS    │  │    OVS     │  │   OVS    │            │
-│  │  VPC-A   │◄─┤  br-int    ├─►│  VPC-B   │            │
-│  └──────────┘  └────────────┘  └──────────┘            │
+│  │   NAT    │  │    OVS     │  │  Docker  │            │
+│  │ Gateway  │◄─┤  br-int    ├─►│ Containers│           │
+│  │ ↓Internet│  └────────────┘  │  (VPCs)  │            │
+│  └──────────┘                   └──────────┘            │
 │                                                          │
 │  ┌──────────────────────────────────────────────────┐  │
-│  │         Docker Containers (network=none)          │  │
-│  │   Attached to OVS via veth pairs and namespaces   │  │
+│  │     VPC Networks: 10.0.0.0/16, 10.1.0.0/16       │  │
+│  │     Transit: 192.168.100.0/24                     │  │
+│  │     External: via NAT Gateway → Internet          │  │
 │  └──────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -94,10 +86,10 @@ This takes about 5 minutes on first run. Subsequent starts take only seconds.
 
 | Command | Description |
 |---------|------------|
-| `make up` | Start Lima VM and entire stack |
+| `make up` | Start Lima VM and entire stack with NAT Gateway |
 | `make down` | Stop containers (VM stays running) |
 | `make status` | Show VM and container status |
-| `make test` | Run connectivity tests |
+| `make test` | Run full connectivity tests (10 tests: 6 internal, 4 external) |
 | `make clean` | Delete VM and everything |
 
 ## Lima VM Control
@@ -117,6 +109,24 @@ This takes about 5 minutes on first run. Subsequent starts take only seconds.
 | `make attach` | Attach test containers to OVS |
 | `make test-ping` | Test container connectivity |
 | `make test-ovn` | Show OVN configuration |
+
+## Connectivity Test Suite
+
+When you run `make test`, it validates:
+
+**Internal Connectivity (6 tests)**:
+- VPC-A: web → app tier
+- VPC-A: app → db tier
+- VPC-B: web → app tier
+- VPC-B: app → db tier
+- Inter-VPC: A-web → B-web
+- Inter-VPC: A-app → B-app
+
+**External Connectivity (4 tests)**:
+- VPC-A → Internet (8.8.8.8)
+- VPC-B → Internet (8.8.8.8)
+- VPC-A → Cloudflare DNS (1.1.1.1)
+- VPC-B → Cloudflare DNS (1.1.1.1)
 
 ## Monitoring (Accessible from macOS)
 
@@ -151,10 +161,16 @@ make shell-ovs
 
 1. **OVN Control Plane**: Defines logical network topology (routers, switches, ports)
 2. **OVS Data Plane**: Executes OpenFlow rules programmed by OVN controller
-3. **No Linux Routing**: All packet forwarding via OVS flow tables, not iptables
+3. **NAT Gateway**: Provides external internet connectivity for all VPCs
 4. **GENEVE Tunnels**: Automatic overlay networking between VPCs
 5. **Container Integration**: Each container bound to an OVN logical switch port
-6. **Automated Setup**: `orchestrator.py` handles all OVN/OVS configuration
+6. **Automated Setup**: `orchestrator.py` handles all OVN/OVS/NAT configuration
+
+### Network Flow Types
+
+- **Intra-VPC**: Direct routing within a VPC (e.g., web → app → db)
+- **Inter-VPC**: Routed through OVN logical routers (VPC-A ↔ VPC-B)
+- **External**: VPC → OVN Router → NAT Gateway → Internet
 
 ## Prerequisites
 
@@ -170,11 +186,13 @@ ovs-container-lab/
 ├── lima.yaml           # Lima VM configuration
 ├── Makefile            # Control from macOS
 ├── docker-compose.yml  # Container stack
+├── orchestrator.py     # Main automation script
 ├── scripts/
 │   ├── attach-containers.sh  # Container-to-OVS attachment
 │   └── test-connectivity.sh   # Connectivity tests
 ├── ovs-container/      # OVS container config
 ├── ovn-container/      # OVN controller config
+├── nat-gateway/        # NAT Gateway for external access
 ├── grafana/            # Monitoring dashboards
 └── prometheus.yml      # Metrics configuration
 ```
@@ -229,9 +247,13 @@ sudo ovs-vsctl set-controller br-custom tcp:127.0.0.1:6653
 
 ### Performance Testing
 ```bash
-# Inside VM
+# Inside VM - test internal connectivity
 docker exec vpc-a-web iperf3 -s &
 docker exec vpc-b-web iperf3 -c 10.0.1.10
+
+# Test external connectivity
+docker exec vpc-a-web ping -c 5 8.8.8.8
+docker exec vpc-b-web curl https://www.google.com
 ```
 
 ### Packet Capture

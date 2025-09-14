@@ -170,14 +170,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_packets_total[5m])",
+          "expr": "rate(ovs_interface_receive_packets_total[5m])",
           "legendFormat": "{{uuid}} RX",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_packets_total[5m])",
+          "expr": "rate(ovs_interface_transmit_packets_total[5m])",
           "legendFormat": "{{uuid}} TX",
           "range": true,
           "refId": "B"
@@ -273,14 +273,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_bytes[5m]) ",
+          "expr": "rate(ovs_interface_receive_bytes_total[5m]) ",
           "legendFormat": "{{uuid}} RX",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_bytes[5m])",
+          "expr": "rate(ovs_interface_transmit_bytes_total[5m])",
           "legendFormat": "{{uuid}} TX",
           "range": true,
           "refId": "B"
@@ -438,28 +438,28 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_packets_total[30s])",
+          "expr": "rate(ovs_interface_receive_packets_total[30s])",
           "legendFormat": "{{uuid}} RX Rate",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_packets_total[30s])",
+          "expr": "rate(ovs_interface_transmit_packets_total[30s])",
           "legendFormat": "{{uuid}} TX Rate",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_errors_total[1m]) + rate(ovs_interface_rx_dropped_total[1m])",
+          "expr": "rate(ovs_interface_receive_errors_total[1m]) + rate(ovs_interface_receive_dropped_total[1m])",
           "legendFormat": "{{uuid}} RX Issues",
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_errors_total[1m]) + rate(ovs_interface_tx_dropped_total[1m])",
+          "expr": "rate(ovs_interface_transmit_errors_total[1m]) + rate(ovs_interface_transmit_dropped_total[1m])",
           "legendFormat": "{{uuid}} TX Issues",
           "range": true,
           "refId": "D"
@@ -557,7 +557,7 @@
         },
         {
           "editorMode": "code",
-          "expr": "ovs_bridge_ports{bridge=\"ovs-br0\"}",
+          "expr": "ovs_bridge_ports_total{bridge=\"ovs-br0\"}",
           "format": "table",
           "legendFormat": "Bridge Ports",
           "range": true,
@@ -684,7 +684,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "(rate(ovs_interface_rx_packets_total[1m]) > 0) or (rate(ovs_interface_tx_packets_total[1m]) > 0)",
+          "expr": "(rate(ovs_interface_receive_packets_total[1m]) > 0) or (rate(ovs_interface_transmit_packets_total[1m]) > 0)",
           "legendFormat": "{{uuid}} Activity",
           "range": true,
           "refId": "A"
@@ -794,22 +794,22 @@
       },
       "targets": [
         {
-          "expr": "rate(ovs_interface_rx_errors_total[5m])",
+          "expr": "rate(ovs_interface_receive_errors_total[5m])",
           "legendFormat": "RX Errors/sec",
           "refId": "A"
         },
         {
-          "expr": "rate(ovs_interface_tx_errors_total[5m])",
+          "expr": "rate(ovs_interface_transmit_errors_total[5m])",
           "legendFormat": "TX Errors/sec",
           "refId": "B"
         },
         {
-          "expr": "rate(ovs_interface_rx_dropped_total[5m])",
+          "expr": "rate(ovs_interface_receive_dropped_total[5m])",
           "legendFormat": "RX Dropped/sec",
           "refId": "C"
         },
         {
-          "expr": "rate(ovs_interface_tx_dropped_total[5m])",
+          "expr": "rate(ovs_interface_transmit_dropped_total[5m])",
           "legendFormat": "TX Dropped/sec",
           "refId": "D"
         },
@@ -1031,22 +1031,22 @@
       },
       "targets": [
         {
-          "expr": "rate(ovs_coverage_total{event=\"dpif_flow_put_error\"}[5m])",
+          "expr": "rate(ovs_coverage_counter_total{event=\"dpif_flow_put_error\"}[5m])",
           "legendFormat": "Flow Put Errors/sec",
           "refId": "A"
         },
         {
-          "expr": "rate(ovs_coverage_total{event=\"netdev_received\"}[5m])",
+          "expr": "rate(ovs_coverage_counter_total{event=\"netdev_received\"}[5m])",
           "legendFormat": "Netdev Received/sec",
           "refId": "B"
         },
         {
-          "expr": "rate(ovs_coverage_total{event=\"bridge_reconfigure\"}[5m])",
+          "expr": "rate(ovs_coverage_counter_total{event=\"bridge_reconfigure\"}[5m])",
           "legendFormat": "Bridge Reconfigs/sec",
           "refId": "C"
         },
         {
-          "expr": "rate(ovs_coverage_total{event=\"rev_port_toggled\"}[5m])",
+          "expr": "rate(ovs_coverage_counter_total{event=\"rev_port_toggled\"}[5m])",
           "legendFormat": "Port Toggle Events/sec",
           "refId": "D"
         }
@@ -1247,22 +1247,22 @@
       },
       "targets": [
         {
-          "expr": "rate(ovs_coverage_avg{component=\"vswitchd-service\",event=\"netlink_sent\",interval=\"5s\"}[5m])",
+          "expr": "rate(ovs_coverage_rate{component=\"vswitchd-service\",event=\"netlink_sent\",interval=\"5s\"}[5m])",
           "legendFormat": "Netlink Messages Sent/sec",
           "refId": "A"
         },
         {
-          "expr": "rate(ovs_coverage_avg{component=\"vswitchd-service\",event=\"netlink_received\",interval=\"5s\"}[5m])",
+          "expr": "rate(ovs_coverage_rate{component=\"vswitchd-service\",event=\"netlink_received\",interval=\"5s\"}[5m])",
           "legendFormat": "Netlink Messages Received/sec",
           "refId": "B"
         },
         {
-          "expr": "rate(ovs_coverage_avg{component=\"vswitchd-service\",event=\"seq_change\",interval=\"5s\"}[5m])",
+          "expr": "rate(ovs_coverage_rate{component=\"vswitchd-service\",event=\"seq_change\",interval=\"5s\"}[5m])",
           "legendFormat": "Sequence Changes/sec (High During Chaos)",
           "refId": "C"
         },
         {
-          "expr": "rate(ovs_coverage_avg{component=\"vswitchd-service\",event=\"poll_zero_timeout\",interval=\"5s\"}[5m])",
+          "expr": "rate(ovs_coverage_rate{component=\"vswitchd-service\",event=\"poll_zero_timeout\",interval=\"5s\"}[5m])",
           "legendFormat": "Poll Zero Timeouts/sec",
           "refId": "D"
         }

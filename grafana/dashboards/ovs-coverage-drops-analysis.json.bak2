@@ -79,7 +79,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(ovs_coverage_total{event=\"drop_action_of_pipeline\"})",
+          "expr": "sum(ovs_coverage_counter_total{event=\"drop_action_of_pipeline\"})",
           "refId": "A"
         }
       ],
@@ -143,7 +143,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(ovs_coverage_total{event=\"dpif_execute_error\"})",
+          "expr": "sum(ovs_coverage_counter_total{event=\"dpif_execute_error\"})",
           "refId": "A"
         }
       ],
@@ -207,7 +207,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(ovs_coverage_total{event=\"dpif_flow_put_error\"})",
+          "expr": "sum(ovs_coverage_counter_total{event=\"dpif_flow_put_error\"})",
           "refId": "A"
         }
       ],
@@ -267,7 +267,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(ovs_interface_rx_dropped_total[1m]) + rate(ovs_interface_tx_dropped_total[1m]))",
+          "expr": "sum(rate(ovs_interface_receive_dropped_total[1m]) + rate(ovs_interface_transmit_dropped_total[1m]))",
           "refId": "A"
         }
       ],
@@ -385,7 +385,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "ovs_coverage_avg{event=~\".*drop.*|.*error.*|.*fail.*\", interval=\"5s\"}",
+          "expr": "ovs_coverage_rate{event=~\".*drop.*|.*error.*|.*fail.*\", interval=\"5s\"}",
           "refId": "A",
           "legendFormat": "{{event}} ({{component}})"
         }
@@ -471,12 +471,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "rate(ovs_interface_rx_dropped_total[5m])",
+          "expr": "rate(ovs_interface_receive_dropped_total[5m])",
           "refId": "A",
           "legendFormat": "RX Dropped - {{uuid}}"
         },
         {
-          "expr": "rate(ovs_interface_tx_dropped_total[5m])",
+          "expr": "rate(ovs_interface_transmit_dropped_total[5m])",
           "refId": "B",
           "legendFormat": "TX Dropped - {{uuid}}"
         }
@@ -579,22 +579,22 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "rate(ovs_interface_rx_crc_errors_total[5m])",
+          "expr": "rate(ovs_interface_receive_crc_errors_total[5m])",
           "refId": "A",
           "legendFormat": "CRC Errors - {{uuid}}"
         },
         {
-          "expr": "rate(ovs_interface_rx_frame_errors_total[5m])",
+          "expr": "rate(ovs_interface_receive_frame_errors_total[5m])",
           "refId": "B",
           "legendFormat": "Frame Errors - {{uuid}}"
         },
         {
-          "expr": "rate(ovs_interface_rx_overrun_errors_total[5m])",
+          "expr": "rate(ovs_interface_receive_overrun_errors_total[5m])",
           "refId": "C",
           "legendFormat": "Overrun Errors - {{uuid}}"
         },
         {
-          "expr": "rate(ovs_interface_rx_missed_errors_total[5m])",
+          "expr": "rate(ovs_interface_receive_missed_errors_total[5m])",
           "refId": "D",
           "legendFormat": "Missed Errors - {{uuid}}"
         }
@@ -674,7 +674,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "topk(10, ovs_coverage_avg{interval=\"5m\"} > 0)",
+          "expr": "topk(10, ovs_coverage_rate{interval=\"5m\"} > 0)",
           "format": "table",
           "instant": true,
           "refId": "A"
@@ -798,13 +798,13 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "ovs_coverage_total{event=~\".*drop.*|.*error.*|.*fail.*\"}",
+          "expr": "ovs_coverage_counter_total{event=~\".*drop.*|.*error.*|.*fail.*\"}",
           "format": "table",
           "instant": true,
           "refId": "A"
         },
         {
-          "expr": "ovs_coverage_avg{event=~\".*drop.*|.*error.*|.*fail.*\", interval=\"5s\"}",
+          "expr": "ovs_coverage_rate{event=~\".*drop.*|.*error.*|.*fail.*\", interval=\"5s\"}",
           "format": "table",
           "instant": true,
           "refId": "B"
@@ -910,7 +910,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum by (event) (ovs_coverage_total{event=~\".*drop.*|.*error.*|.*fail.*\"})",
+          "expr": "sum by (event) (ovs_coverage_counter_total{event=~\".*drop.*|.*error.*|.*fail.*\"})",
           "instant": true,
           "refId": "A",
           "legendFormat": "{{event}}"
@@ -968,7 +968,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "topk(5, ovs_coverage_avg{event=~\".*drop.*|.*error.*|.*fail.*\", interval=\"1h\"})",
+          "expr": "topk(5, ovs_coverage_rate{event=~\".*drop.*|.*error.*|.*fail.*\", interval=\"1h\"})",
           "instant": true,
           "refId": "A",
           "legendFormat": "{{event}}"

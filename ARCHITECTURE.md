@@ -34,57 +34,78 @@ A fully containerized Open vSwitch (OVS) and Open Virtual Network (OVN) lab that
 
 ### 2. Data Plane
 
-#### OVS Instances (`ovs-vpc-a`, `ovs-vpc-b`)
-- **Role**: Virtual switches for each VPC
+#### OVS Instance (Host VM)
+- **Role**: Single OVS instance managing all VPCs
 - **Components**:
   - `ovs-vswitchd`: Userspace datapath
   - `ovsdb-server`: Local OVS configuration
   - `ovn-controller`: Connects to OVN central
   - OVS Prometheus exporter (port 9475)
 - **Configuration**:
-  - Each acts as OVN chassis
+  - Acts as single OVN chassis for all VPCs
   - GENEVE tunnels for overlay networking
-  - Userspace datapath via `--disable-system` flag
+  - Userspace datapath via netdev type
+
+#### NAT Gateway Container
+- **Role**: Provides external internet connectivity
+- **Components**:
+  - Ubuntu 22.04 base with iptables
+  - Dual network interfaces (eth0: Docker bridge, eth1: OVN)
+  - NAT/MASQUERADE rules for VPC subnets
+  - Static routes to VPC networks
+- **Configuration**:
+  - Connected to Docker default network for internet access
+  - Connected to OVN transit network (192.168.100.254)
+  - Port security disabled to allow traffic forwarding
 
 ### 3. Logical Network Architecture
 
 ```
-┌──────────────────────────────────────────┐
-│           OVN Northbound DB              │
-├──────────────────────────────────────────┤
-│                                          │
-│  ┌────────────────────────────────┐     │
-│  │    Logical Router: lr-gateway   │     │  ← External Gateway Router
-│  │    - NAT: 0.0.0.0/0            │     │
-│  │    - External IP: <public>      │     │
-│  └──────┬──────────────┬──────────┘     │
-│         │              │                 │
-│  ┌──────▼──────┐ ┌────▼──────┐         │
-│  │  LR-VPC-A   │ │  LR-VPC-B  │         │  ← VPC Logical Routers
-│  │ 10.0.0.0/16 │ │10.1.0.0/16 │         │
-│  └──┬───┬───┬──┘ └──┬───┬───┬─┘        │
-│     │   │   │       │   │   │           │
-│  ┌──▼─┐ │ ┌─▼──┐ ┌──▼─┐ │ ┌─▼──┐      │
-│  │LS  │ │ │LS  │ │LS  │ │ │LS  │      │  ← Logical Switches
-│  │Web │ │ │App │ │Web │ │ │App │      │
-│  └────┘ │ └────┘ └────┘ │ └────┘      │
-│         │                │              │
-│       ┌─▼──┐           ┌─▼──┐          │
-│       │LS  │           │LS  │          │
-│       │DB  │           │DB  │          │
-│       └────┘           └────┘          │
-└──────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│              OVN Northbound DB                   │
+├──────────────────────────────────────────────────┤
+│                                                  │
+│     ┌─────────────────────────────┐             │
+│     │    NAT Gateway Container    │             │  ← External Connectivity
+│     │   192.168.100.254 (eth1)    │             │
+│     │   172.18.0.4 (eth0→Internet)│             │
+│     └──────────┬──────────────────┘             │
+│                │                                 │
+│  ┌─────────────▼─────────────────┐              │
+│  │  Logical Switch: ls-transit    │              │  ← Transit Network
+│  │     192.168.100.0/24          │              │
+│  └──┬──────────┬──────────┬──────┘              │
+│     │          │          │                      │
+│  ┌──▼────┐ ┌──▼──────┐ ┌▼───────┐              │
+│  │lr-gw  │ │lr-vpc-a │ │lr-vpc-b│              │  ← Logical Routers
+│  │0.0.0.0│ │10.0/16  │ │10.1/16 │              │
+│  └───────┘ └─┬──┬──┬─┘ └┬──┬──┬─┘              │
+│              │  │  │     │  │  │                 │
+│           ┌──▼┐ │ ┌▼─┐┌─▼┐ │ ┌▼──┐             │
+│           │Web│ │ │App│Web│ │ │App│             │  ← Logical Switches
+│           └───┘ │ └──┘└───┘ │ └───┘             │
+│                 │            │                    │
+│               ┌─▼┐         ┌▼─┐                 │
+│               │DB│         │DB│                  │
+│               └──┘         └──┘                  │
+└──────────────────────────────────────────────────┘
 ```
 
 ### 4. Physical Network Topology
 
 ```
-Host Machine
+Host Machine (Lima VM)
+│
+├── Docker Bridge: default (172.18.0.0/16)
+│   └── nat-gateway (172.18.0.4) → Internet Gateway
 │
 ├── Docker Bridge: transit-overlay (192.168.100.0/24)
 │   ├── ovn-central (192.168.100.5)
-│   ├── ovs-vpc-a (192.168.100.10)
-│   └── ovs-vpc-b (192.168.100.20)
+│   └── nat-gateway (192.168.100.254 via OVS)
+│
+├── OVS Bridge: br-int (OVN Integration Bridge)
+│   ├── VPC Container veth pairs
+│   └── NAT Gateway eth1 interface
 │
 ├── GENEVE Tunnels (Overlay)
 │   └── Between OVS instances for cross-VPC traffic
@@ -115,11 +136,13 @@ Host Machine
 4. Sent via transit network to destination OVS
 5. Decapsulated and delivered to container
 
-### External Communication
-1. Container sends packet to internet
-2. Logical router applies SNAT
-3. Packet routed through gateway router
-4. NAT to external IP (if configured)
+### External Communication (NAT Gateway)
+1. Container sends packet to internet (e.g., 8.8.8.8)
+2. Packet routed through VPC logical router to gateway router
+3. Gateway router forwards to NAT Gateway container (192.168.100.254)
+4. NAT Gateway performs MASQUERADE for VPC subnets
+5. Packet exits via Docker bridge network to internet
+6. Return traffic follows reverse path
 
 ## Multi-Host Federation
 
@@ -276,6 +299,8 @@ make clean    # Full teardown
 - [x] Simplified Makefile with clean targets
 - [x] Fixed port conflict with macOS AirPlay (driver on port 9876)
 - [x] Working OVN Docker driver API endpoints
+- [x] **External Internet Connectivity via NAT Gateway**
+- [x] **Full connectivity testing (internal + external)**
 
 ### Ready for Testing 🧪
 - OVN Docker driver API on port 9876

@@ -462,13 +462,13 @@
           "refId": "A"
         },
         {
-          "expr": "rate(ovs_interface_rx_packets_total[5m]) * on(uuid) group_left(name) ovs_interface{name=~\"veth-vpc-a.*\"}",
+          "expr": "rate(ovs_interface_rx_packets[5m]) * on(uuid) group_left(name) ovs_interface{name=~\"veth-vpc-a.*\"}",
           "format": "table",
           "instant": true,
           "refId": "B"
         },
         {
-          "expr": "rate(ovs_interface_tx_packets_total[5m]) * on(uuid) group_left(name) ovs_interface{name=~\"veth-vpc-a.*\"}",
+          "expr": "rate(ovs_interface_tx_packets[5m]) * on(uuid) group_left(name) ovs_interface{name=~\"veth-vpc-a.*\"}",
           "format": "table",
           "instant": true,
           "refId": "C"
@@ -721,13 +721,13 @@
           "refId": "A"
         },
         {
-          "expr": "rate(ovs_interface_rx_packets_total[5m]) * on(uuid) group_left(name) ovs_interface{name=~\"veth-vpc-b.*\"}",
+          "expr": "rate(ovs_interface_rx_packets[5m]) * on(uuid) group_left(name) ovs_interface{name=~\"veth-vpc-b.*\"}",
           "format": "table",
           "instant": true,
           "refId": "B"
         },
         {
-          "expr": "rate(ovs_interface_tx_packets_total[5m]) * on(uuid) group_left(name) ovs_interface{name=~\"veth-vpc-b.*\"}",
+          "expr": "rate(ovs_interface_tx_packets[5m]) * on(uuid) group_left(name) ovs_interface{name=~\"veth-vpc-b.*\"}",
           "format": "table",
           "instant": true,
           "refId": "C"

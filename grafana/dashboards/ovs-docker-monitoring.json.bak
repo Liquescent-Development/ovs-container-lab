@@ -170,14 +170,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_packets_total[5m])",
+          "expr": "rate(ovs_interface_rx_packets[5m])",
           "legendFormat": "{{uuid}} RX",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_packets_total[5m])",
+          "expr": "rate(ovs_interface_tx_packets[5m])",
           "legendFormat": "{{uuid}} TX",
           "range": true,
           "refId": "B"
@@ -366,7 +366,7 @@
           },
           {
             "matcher": {
-              "id": "byName",
+              "id": "byName", 
               "options": "TX Errors"
             },
             "properties": [
@@ -386,7 +386,7 @@
             },
             "properties": [
               {
-                "id": "color",
+                "id": "color", 
                 "value": {
                   "mode": "fixed",
                   "fixedColor": "dark-red"
@@ -397,13 +397,13 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "TX Drops"
+              "options": "TX Drops"  
             },
             "properties": [
               {
                 "id": "color",
                 "value": {
-                  "mode": "fixed",
+                  "mode": "fixed", 
                   "fixedColor": "dark-orange"
                 }
               }
@@ -422,7 +422,7 @@
         "legend": {
           "calcs": [
             "min",
-            "mean",
+            "mean", 
             "max",
             "lastNotNull"
           ],
@@ -438,30 +438,30 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_packets_total[30s])",
+          "expr": "rate(ovs_interface_rx_packets[30s])",
           "legendFormat": "{{uuid}} RX Rate",
           "range": true,
           "refId": "A"
         },
         {
-          "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_packets_total[30s])",
+          "editorMode": "code", 
+          "expr": "rate(ovs_interface_tx_packets[30s])",
           "legendFormat": "{{uuid}} TX Rate",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_errors_total[1m]) + rate(ovs_interface_rx_dropped_total[1m])",
-          "legendFormat": "{{uuid}} RX Issues",
+          "expr": "rate(ovs_interface_rx_errors[1m]) + rate(ovs_interface_rx_dropped[1m])",
+          "legendFormat": "{{uuid}} RX Issues", 
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_errors_total[1m]) + rate(ovs_interface_tx_dropped_total[1m])",
+          "expr": "rate(ovs_interface_tx_errors[1m]) + rate(ovs_interface_tx_dropped[1m])",
           "legendFormat": "{{uuid}} TX Issues",
-          "range": true,
+          "range": true, 
           "refId": "D"
         }
       ],
@@ -494,7 +494,7 @@
                   "text": "DOWN"
                 },
                 "1": {
-                  "color": "green",
+                  "color": "green", 
                   "index": 1,
                   "text": "UP"
                 }
@@ -550,7 +550,7 @@
         {
           "editorMode": "code",
           "expr": "up{job=\"node_exporter\"}",
-          "format": "table",
+          "format": "table", 
           "legendFormat": "Node Exporter",
           "range": true,
           "refId": "B"
@@ -582,7 +582,7 @@
             "indexByName": {},
             "renameByName": {
               "Value #A": "OVS Status",
-              "Value #B": "Node Status",
+              "Value #B": "Node Status", 
               "Value #C": "Active Ports"
             }
           }
@@ -684,7 +684,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "(rate(ovs_interface_rx_packets_total[1m]) > 0) or (rate(ovs_interface_tx_packets_total[1m]) > 0)",
+          "expr": "(rate(ovs_interface_rx_packets[1m]) > 0) or (rate(ovs_interface_tx_packets[1m]) > 0)",
           "legendFormat": "{{uuid}} Activity",
           "range": true,
           "refId": "A"
@@ -794,22 +794,22 @@
       },
       "targets": [
         {
-          "expr": "rate(ovs_interface_rx_errors_total[5m])",
+          "expr": "rate(ovs_interface_rx_errors[5m])",
           "legendFormat": "RX Errors/sec",
           "refId": "A"
         },
         {
-          "expr": "rate(ovs_interface_tx_errors_total[5m])",
+          "expr": "rate(ovs_interface_tx_errors[5m])",
           "legendFormat": "TX Errors/sec",
           "refId": "B"
         },
         {
-          "expr": "rate(ovs_interface_rx_dropped_total[5m])",
+          "expr": "rate(ovs_interface_rx_dropped[5m])",
           "legendFormat": "RX Dropped/sec",
           "refId": "C"
         },
         {
-          "expr": "rate(ovs_interface_tx_dropped_total[5m])",
+          "expr": "rate(ovs_interface_tx_dropped[5m])",
           "legendFormat": "TX Dropped/sec",
           "refId": "D"
         },

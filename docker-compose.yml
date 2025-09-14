@@ -35,6 +35,24 @@ services:
       - "ovs-lab=true"
       - "component=control-plane"
 
+  # NAT Gateway for external connectivity
+  nat-gateway:
+    build: ./nat-gateway
+    container_name: nat-gateway
+    hostname: nat-gateway
+    restart: unless-stopped
+    privileged: true
+    networks:
+      - default  # Start with bridge network for internet access
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    sysctls:
+      - net.ipv4.ip_forward=1
+    labels:
+      - "ovs-lab=true"
+      - "component=gateway"
+
   # OVS runs on the host VM, not in containers
   # This simplifies networking and avoids Docker bridge issues
 
@@ -81,19 +99,13 @@ services:
   # ==================== TEST CONTAINERS - VPC A ====================
   
   vpc-a-web:
-    image: alpine:latest
+    build: ./vpc-container
     container_name: vpc-a-web
     hostname: vpc-a-web
     restart: unless-stopped
     network_mode: none  # Will be connected to OVS
-    command: >
-      sh -c "
-        apk add --no-cache netcat-openbsd iperf3 curl wget >/dev/null 2>&1;
-        nc -l -k -p 80 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -p 443 < /dev/zero > /dev/null 2>&1 &
-        iperf3 -s -D;
-        sleep infinity
-      "
+    environment:
+      - TIER=web
     profiles:
       - testing
       - vpc
@@ -103,19 +115,13 @@ services:
       - "tier=web"
 
   vpc-a-app:
-    image: alpine:latest
+    build: ./vpc-container
     container_name: vpc-a-app
     hostname: vpc-a-app
     restart: unless-stopped
     network_mode: none  # Will be connected to OVS
-    command: >
-      sh -c "
-        apk add --no-cache netcat-openbsd iperf3 >/dev/null 2>&1;
-        nc -l -k -p 8080 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -p 8443 < /dev/zero > /dev/null 2>&1 &
-        iperf3 -s -D;
-        sleep infinity
-      "
+    environment:
+      - TIER=app
     profiles:
       - testing
       - vpc
@@ -125,18 +131,13 @@ services:
       - "tier=app"
 
   vpc-a-db:
-    image: alpine:latest
+    build: ./vpc-container
     container_name: vpc-a-db
     hostname: vpc-a-db
     restart: unless-stopped
     network_mode: none  # Will be connected to OVS
-    command: >
-      sh -c "
-        apk add --no-cache netcat-openbsd >/dev/null 2>&1;
-        nc -l -k -p 5432 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -p 3306 < /dev/zero > /dev/null 2>&1 &
-        sleep infinity
-      "
+    environment:
+      - TIER=db
     profiles:
       - testing
       - vpc
@@ -148,19 +149,13 @@ services:
   # ==================== TEST CONTAINERS - VPC B ====================
   
   vpc-b-web:
-    image: alpine:latest
+    build: ./vpc-container
     container_name: vpc-b-web
     hostname: vpc-b-web
     restart: unless-stopped
     network_mode: none  # Will be connected to OVS
-    command: >
-      sh -c "
-        apk add --no-cache netcat-openbsd iperf3 curl wget >/dev/null 2>&1;
-        nc -l -k -p 80 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -p 443 < /dev/zero > /dev/null 2>&1 &
-        iperf3 -s -D;
-        sleep infinity
-      "
+    environment:
+      - TIER=web
     profiles:
       - testing
       - vpc
@@ -170,19 +165,13 @@ services:
       - "tier=web"
 
   vpc-b-app:
-    image: alpine:latest
+    build: ./vpc-container
     container_name: vpc-b-app
     hostname: vpc-b-app
     restart: unless-stopped
     network_mode: none  # Will be connected to OVS
-    command: >
-      sh -c "
-        apk add --no-cache netcat-openbsd iperf3 >/dev/null 2>&1;
-        nc -l -k -p 8080 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -p 8443 < /dev/zero > /dev/null 2>&1 &
-        iperf3 -s -D;
-        sleep infinity
-      "
+    environment:
+      - TIER=app
     profiles:
       - testing
       - vpc
@@ -192,18 +181,13 @@ services:
       - "tier=app"
 
   vpc-b-db:
-    image: alpine:latest
+    build: ./vpc-container
     container_name: vpc-b-db
     hostname: vpc-b-db
     restart: unless-stopped
     network_mode: none  # Will be connected to OVS
-    command: >
-      sh -c "
-        apk add --no-cache netcat-openbsd >/dev/null 2>&1;
-        nc -l -k -p 5432 < /dev/zero > /dev/null 2>&1 &
-        nc -l -k -p 3306 < /dev/zero > /dev/null 2>&1 &
-        sleep infinity
-      "
+    environment:
+      - TIER=db
     profiles:
       - testing
       - vpc
@@ -214,20 +198,57 @@ services:
 
   # ==================== TRAFFIC GENERATION ====================
 
-  traffic-generator:
+  traffic-gen-a:
     build: ./traffic-generator
-    container_name: traffic-generator
+    container_name: traffic-gen-a
+    hostname: traffic-gen-a
     restart: "no"
-    networks:
-      transit-overlay:
-        ipv4_address: 192.168.100.200
+    network_mode: none  # Will be connected to OVS
     privileged: true
     volumes:
       - ./traffic-generator:/workspace
     command: sleep infinity
+    # Resource limits to prevent system hang
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'  # 50% of one CPU core
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     labels:
       - "ovs-lab=true"
       - "component=testing"
+      - "vpc=a"
+      - "tier=test"
+    profiles:
+      - traffic
+
+  traffic-gen-b:
+    build: ./traffic-generator
+    container_name: traffic-gen-b
+    hostname: traffic-gen-b
+    restart: "no"
+    network_mode: none  # Will be connected to OVS
+    privileged: true
+    volumes:
+      - ./traffic-generator:/workspace
+    command: sleep infinity
+    # Resource limits to prevent system hang
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'  # 50% of one CPU core
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    labels:
+      - "ovs-lab=true"
+      - "component=testing"
+      - "vpc=b"
+      - "tier=test"
     profiles:
       - traffic
 
