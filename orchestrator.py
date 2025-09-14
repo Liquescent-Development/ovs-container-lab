@@ -959,6 +959,143 @@ class TestRunner:
             logger.error(f"{description}: Error - {e}")
             return False
 
+    def test_traffic_prerequisites(self):
+        """Test that all prerequisites for traffic generation are met"""
+        print("\n" + "="*60)
+        print("TESTING TRAFFIC GENERATION PREREQUISITES")
+        print("="*60)
+
+        passed = 0
+        failed = 0
+
+        # 1. Check traffic generator containers exist and are running
+        print("\n1. Checking traffic generator containers...")
+        traffic_gens = ["traffic-gen-a", "traffic-gen-b"]
+        for gen in traffic_gens:
+            cmd = ["docker", "ps", "-q", "-f", f"name={gen}"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.stdout.strip():
+                print(f"  ✓ {gen} is running")
+                passed += 1
+            else:
+                print(f"  ✗ {gen} is NOT running - run 'make traffic-start' first")
+                failed += 1
+
+        # 2. Check VPC containers exist and are running
+        print("\n2. Checking VPC containers...")
+        vpc_containers = ["vpc-a-web", "vpc-a-app", "vpc-a-db", "vpc-b-web", "vpc-b-app", "vpc-b-db"]
+        for container in vpc_containers:
+            cmd = ["docker", "ps", "-q", "-f", f"name={container}"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.stdout.strip():
+                print(f"  ✓ {container} is running")
+                passed += 1
+            else:
+                print(f"  ✗ {container} is NOT running")
+                failed += 1
+
+        # 3. Check traffic generators have network interfaces
+        print("\n3. Checking traffic generator network interfaces...")
+        for gen in traffic_gens:
+            cmd = ["docker", "exec", gen, "ip", "addr", "show", "eth1"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0 and "inet " in result.stdout:
+                ip = [line for line in result.stdout.split('\n') if 'inet ' in line][0].split()[1].split('/')[0]
+                print(f"  ✓ {gen} has eth1 interface with IP {ip}")
+                passed += 1
+            else:
+                print(f"  ✗ {gen} does NOT have eth1 interface - run 'make attach' to fix")
+                failed += 1
+
+        # 4. Check VPC containers are listening on expected ports
+        print("\n4. Checking VPC container listeners...")
+        port_checks = [
+            ("vpc-a-web", ["80", "443", "5201"], "web"),
+            ("vpc-a-app", ["8080", "8443", "5201"], "app"),
+            ("vpc-a-db", ["3306", "5432", "5201"], "db"),
+            ("vpc-b-web", ["80", "443", "5201"], "web"),
+            ("vpc-b-app", ["8080", "8443", "5201"], "app"),
+            ("vpc-b-db", ["3306", "5432", "5201"], "db"),
+        ]
+
+        for container, ports, tier in port_checks:
+            cmd = ["docker", "exec", container, "sh", "-c", "netstat -tln 2>/dev/null || ss -tln"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                listening_ports = []
+                for port in ports:
+                    if f":{port}" in result.stdout:
+                        listening_ports.append(port)
+
+                if len(listening_ports) == len(ports):
+                    print(f"  ✓ {container} listening on all {tier} ports: {', '.join(ports)}")
+                    passed += 1
+                else:
+                    missing = set(ports) - set(listening_ports)
+                    print(f"  ✗ {container} missing listeners on ports: {', '.join(missing)}")
+                    failed += 1
+            else:
+                print(f"  ✗ {container} - could not check listeners")
+                failed += 1
+
+        # 5. Test connectivity from traffic generators to VPC containers
+        print("\n5. Testing connectivity from traffic generators to VPC containers...")
+        connectivity_tests = [
+            ("traffic-gen-a", "10.0.1.10", "traffic-gen-a → vpc-a-web"),
+            ("traffic-gen-a", "10.0.2.10", "traffic-gen-a → vpc-a-app"),
+            ("traffic-gen-a", "10.0.3.10", "traffic-gen-a → vpc-a-db"),
+            ("traffic-gen-b", "10.1.1.10", "traffic-gen-b → vpc-b-web"),
+            ("traffic-gen-b", "10.1.2.10", "traffic-gen-b → vpc-b-app"),
+            ("traffic-gen-b", "10.1.3.10", "traffic-gen-b → vpc-b-db"),
+        ]
+
+        for source, target_ip, description in connectivity_tests:
+            cmd = ["docker", "exec", source, "ping", "-c", "1", "-W", "2", target_ip]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                print(f"  ✓ {description}")
+                passed += 1
+            else:
+                print(f"  ✗ {description} - FAILED")
+                failed += 1
+
+        # 6. Test port connectivity (not just ICMP)
+        print("\n6. Testing port connectivity to VPC services...")
+        port_tests = [
+            ("traffic-gen-a", "10.0.1.10", "80", "HTTP to vpc-a-web"),
+            ("traffic-gen-a", "10.0.2.10", "8080", "App port to vpc-a-app"),
+            ("traffic-gen-b", "10.1.1.10", "80", "HTTP to vpc-b-web"),
+            ("traffic-gen-b", "10.1.2.10", "8080", "App port to vpc-b-app"),
+        ]
+
+        for source, target_ip, port, description in port_tests:
+            cmd = ["docker", "exec", source, "nc", "-zv", "-w", "2", target_ip, port]
+            result = subprocess.run(cmd, capture_output=True, text=True, stderr=subprocess.STDOUT)
+            if "succeeded" in result.stdout or "open" in result.stdout:
+                print(f"  ✓ {description} (port {port})")
+                passed += 1
+            else:
+                print(f"  ✗ {description} (port {port}) - FAILED")
+                failed += 1
+
+        # Summary
+        print("\n" + "="*60)
+        print("TRAFFIC TEST SUMMARY")
+        print("="*60)
+        print(f"Passed: {passed}")
+        print(f"Failed: {failed}")
+        print(f"Total:  {passed + failed}")
+
+        if failed == 0:
+            print("\n✅ All traffic generation prerequisites are met!")
+            print("You can now run 'make traffic-run' to generate traffic")
+            return True
+        else:
+            print(f"\n❌ {failed} prerequisites failed. Fix these issues before generating traffic.")
+            if "traffic-gen" in str(failed):
+                print("\nHint: Run 'make traffic-start' to start traffic generators")
+            return False
+
 
 class MonitoringManager:
     """Manages monitoring setup for OVS on the host"""
@@ -1236,6 +1373,9 @@ def main():
     chaos_parser.add_argument("--duration", type=int, default=60, help="Duration in seconds")
     chaos_parser.add_argument("--target", default="ovs-vpc-a", help="Target container")
 
+    # Traffic-test command
+    traffic_test_parser = subparsers.add_parser("traffic-test", help="Test traffic generation prerequisites")
+
     # Show command
     show_parser = subparsers.add_parser("show", help="Show OVN topology")
 
@@ -1290,6 +1430,11 @@ def main():
     elif args.command == "chaos":
         chaos = ChaosEngineer()
         chaos.run_scenario(args.scenario, args.duration, args.target)
+
+    elif args.command == "traffic-test":
+        tester = TestRunner()
+        success = tester.test_traffic_prerequisites()
+        return 0 if success else 1
 
     elif args.command == "show":
         ovn = OVNManager()

@@ -204,6 +204,10 @@ test-full: test-start test
 
 # ==================== TRAFFIC GENERATION ====================
 
+traffic-test:
+	@echo "Testing traffic generation prerequisites..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py traffic-test"
+
 traffic-start:
 	@echo "Starting traffic generators..."
 	@echo "Ensuring Docker is healthy..."
