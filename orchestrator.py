@@ -671,61 +671,109 @@ class OVNManager:
             logger.error(f"Cannot get PID for container {container_name}")
             return False
 
-        # Create veth pair and attach to container namespace
-        # Use last 8 chars to avoid collision between traffic-gen-a and traffic-gen-b
-        if container_name.startswith("traffic-gen"):
-            veth_host = f"veth-tg-{container_name[-1]}"
-        else:
-            veth_host = f"veth-{container_name[:8]}"
-        veth_cont = "eth1"
+        try:
+            # Create veth pair and attach to container namespace
+            # Use last 8 chars to avoid collision between traffic-gen-a and traffic-gen-b
+            if container_name.startswith("traffic-gen"):
+                veth_host = f"veth-tg-{container_name[-1]}"
+            else:
+                veth_host = f"veth-{container_name[:8]}"
+            veth_cont = "eth1"
 
-        # Delete if exists
-        subprocess.run(["sudo", "ip", "link", "del", veth_host], capture_output=True)
+            # Delete if exists
+            subprocess.run(["sudo", "ip", "link", "del", veth_host], capture_output=True)
 
-        # Create veth pair
-        subprocess.run(["sudo", "ip", "link", "add", veth_host, "type", "veth", "peer", "name", veth_cont], check=True)
+            # Create veth pair
+            result = subprocess.run(["sudo", "ip", "link", "add", veth_host, "type", "veth", "peer", "name", veth_cont],
+                                  capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"Failed to create veth pair for {container_name}: {result.stderr}")
+                return False
 
-        # Move one end to container namespace
-        subprocess.run(["sudo", "ip", "link", "set", veth_cont, "netns", container_pid], check=True)
+            # Move one end to container namespace
+            result = subprocess.run(["sudo", "ip", "link", "set", veth_cont, "netns", container_pid],
+                                  capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"Failed to move veth to container namespace for {container_name}: {result.stderr}")
+                # Clean up the veth pair
+                subprocess.run(["sudo", "ip", "link", "del", veth_host], capture_output=True)
+                return False
 
-        # Configure container interface
-        subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "link", "set", veth_cont, "address", mac_address], check=True)
-        subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "addr", "add", f"{ip_address}/24", "dev", veth_cont], check=True)
-        subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "link", "set", veth_cont, "up"], check=True)
+            # Configure container interface
+            result = subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "link", "set", veth_cont, "address", mac_address],
+                                  capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"Failed to set MAC address for {container_name}: {result.stderr}")
+                subprocess.run(["sudo", "ip", "link", "del", veth_host], capture_output=True)
+                return False
 
-        # Add default route in container
-        gateway = ".".join(ip_address.split(".")[:3]) + ".1"
-        subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "route", "add", "default", "via", gateway], capture_output=True)
+            result = subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "addr", "add", f"{ip_address}/24", "dev", veth_cont],
+                                  capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"Failed to add IP address for {container_name}: {result.stderr}")
+                subprocess.run(["sudo", "ip", "link", "del", veth_host], capture_output=True)
+                return False
 
-        # Attach host end to OVS integration bridge
-        # First check if port already exists
-        result = subprocess.run(["sudo", "ovs-vsctl", "list-ports", "br-int"], capture_output=True, text=True)
-        if veth_host not in result.stdout:
-            # Add port with external_ids in one atomic operation to avoid race condition
-            subprocess.run([
-                "sudo", "ovs-vsctl",
-                "add-port", "br-int", veth_host,
-                "--", "set", "Interface", veth_host, f"external_ids:iface-id={port_name}"
-            ], check=True)
-        else:
-            # Port exists, just update external_ids
-            subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:iface-id={port_name}"], check=True)
+            result = subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "link", "set", veth_cont, "up"],
+                                  capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"Failed to bring up interface for {container_name}: {result.stderr}")
+                subprocess.run(["sudo", "ip", "link", "del", veth_host], capture_output=True)
+                return False
 
-        # Also set tenant ownership on the OVS interface
-        tenant_id = self.get_tenant_from_vpc(container_name)
-        subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:tenant-id={tenant_id}"], check=True)
-        # Special handling for traffic generators
-        if container_name.startswith("traffic-gen-"):
-            vpc_id = f"vpc-{container_name.split('-')[-1]}"
-        else:
-            vpc_id = f"vpc-{container_name.split('-')[1]}" if '-' in container_name else ""
-        if vpc_id:
-            subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:vpc-id={vpc_id}"], check=True)
+            # Add default route in container
+            gateway = ".".join(ip_address.split(".")[:3]) + ".1"
+            subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "route", "add", "default", "via", gateway], capture_output=True)
 
-        subprocess.run(["sudo", "ip", "link", "set", veth_host, "up"], check=True)
+            # Attach host end to OVS integration bridge
+            # First check if port already exists
+            result = subprocess.run(["sudo", "ovs-vsctl", "list-ports", "br-int"], capture_output=True, text=True)
+            if veth_host not in result.stdout:
+                # Add port with external_ids in one atomic operation to avoid race condition
+                result = subprocess.run([
+                    "sudo", "ovs-vsctl",
+                    "add-port", "br-int", veth_host,
+                    "--", "set", "Interface", veth_host, f"external_ids:iface-id={port_name}"
+                ], capture_output=True, text=True)
+                if result.returncode != 0:
+                    logger.error(f"Failed to add port to OVS for {container_name}: {result.stderr}")
+                    subprocess.run(["sudo", "ip", "link", "del", veth_host], capture_output=True)
+                    return False
+            else:
+                # Port exists, just update external_ids
+                subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:iface-id={port_name}"], check=True)
 
-        logger.info(f"Container {container_name} bound to OVN port {port_name}")
-        return True
+            # Also set tenant ownership on the OVS interface
+            tenant_id = self.get_tenant_from_vpc(container_name)
+            subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:tenant-id={tenant_id}"], check=True)
+            # Special handling for traffic generators
+            if container_name.startswith("traffic-gen-"):
+                vpc_id = f"vpc-{container_name.split('-')[-1]}"
+            else:
+                vpc_id = f"vpc-{container_name.split('-')[1]}" if '-' in container_name else ""
+            if vpc_id:
+                subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:vpc-id={vpc_id}"], check=True)
+
+            subprocess.run(["sudo", "ip", "link", "set", veth_host, "up"], check=True)
+
+            # Verify the interface actually exists in the container
+            verify_cmd = ["docker", "exec", container_name, "ip", "addr", "show", "eth1"]
+            result = subprocess.run(verify_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"Failed to verify eth1 in container {container_name} after setup")
+                return False
+
+            logger.info(f"Container {container_name} successfully bound to OVN port {port_name}")
+            return True
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Command failed while binding {container_name}: {e}")
+            # Try to clean up
+            subprocess.run(["sudo", "ip", "link", "del", veth_host], capture_output=True)
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error binding {container_name}: {e}")
+            return False
 
     def setup_nat_gateway_networking(self):
         """Setup NAT Gateway with proper networking for external connectivity"""
@@ -829,17 +877,28 @@ class OVNManager:
             {"name": "traffic-gen-b", "switch": "ls-vpc-b-test", "ip": "10.1.4.10"},
         ]
 
+        successful = 0
+        failed = 0
         for config in container_config:
             # Check if container exists
             result = subprocess.run(["docker", "ps", "-q", "-f", f"name={config['name']}"], capture_output=True, text=True)
             if result.stdout.strip():
                 # Generate a MAC address for the container
                 mac_address = self.generate_mac_address()
-                self.bind_container_to_ovn(config["name"], config["switch"], config["ip"], mac_address)
+                success = self.bind_container_to_ovn(config["name"], config["switch"], config["ip"], mac_address)
+                if success:
+                    successful += 1
+                else:
+                    failed += 1
+                    logger.error(f"FAILED to bind container {config['name']} to OVN")
             else:
                 logger.warning(f"Container {config['name']} not found")
+                failed += 1
 
-        logger.info("Container networking setup complete")
+        if failed > 0:
+            logger.error(f"Container networking setup FAILED: {successful} successful, {failed} failed")
+        else:
+            logger.info(f"Container networking setup complete: {successful} containers bound successfully")
 
 
 # DockerNetworkManager removed - was trying to use non-existent "openvswitch" driver
