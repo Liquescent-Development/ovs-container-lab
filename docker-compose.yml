@@ -22,7 +22,7 @@ services:
       - SYS_MODULE
       - SYS_NICE
     environment:
-      - ENABLE_DOCKER_DRIVER=true
+      - ENABLE_DOCKER_DRIVER=false
     healthcheck:
       test: ["CMD", "/healthcheck.sh"]
       interval: 30s

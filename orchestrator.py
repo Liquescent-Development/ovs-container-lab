@@ -593,6 +593,21 @@ class OVNManager:
             subprocess.run(["sudo", "ovs-vsctl", "add-port", bridge, veth_host], check=True)
             subprocess.run(["sudo", "ip", "link", "set", veth_host, "up"], check=True)
 
+            # Disable checksum offloading to fix TCP with userspace OVS
+            # This is critical for TCP to work with userspace datapath
+            # Based on OVS mailing list discussions for userspace (non-DPDK) datapath
+            logger.info(f"Disabling checksum offloading on {veth_host} for TCP compatibility")
+
+            # Disable both TX and RX on host side
+            subprocess.run(["sudo", "ethtool", "-K", veth_host, "tx", "off", "rx", "off"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "ethtool", "-K", veth_host, "tso", "off", "gso", "off"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "ethtool", "-K", veth_host, "gro", "off", "lro", "off"], check=False, stderr=subprocess.DEVNULL)
+
+            # Disable on container side
+            subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ethtool", "-K", veth_container, "tx", "off", "rx", "off"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ethtool", "-K", veth_container, "tso", "off", "gso", "off"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ethtool", "-K", veth_container, "gro", "off", "lro", "off"], check=False, stderr=subprocess.DEVNULL)
+
             logger.info(f"Successfully connected {container_name} to {bridge}")
             return True
 
@@ -775,6 +790,21 @@ class OVNManager:
                 subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:vpc-id={vpc_id}"], check=True)
 
             subprocess.run(["sudo", "ip", "link", "set", veth_host, "up"], check=True)
+
+            # Disable checksum offloading to fix TCP with userspace OVS
+            # This is critical for TCP to work with userspace datapath
+            # Based on OVS mailing list discussions for userspace (non-DPDK) datapath
+            logger.info(f"Disabling checksum offloading on {veth_host} for TCP compatibility")
+
+            # Disable both TX and RX on host side
+            subprocess.run(["sudo", "ethtool", "-K", veth_host, "tx", "off", "rx", "off"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "ethtool", "-K", veth_host, "tso", "off", "gso", "off"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "ethtool", "-K", veth_host, "gro", "off", "lro", "off"], check=False, stderr=subprocess.DEVNULL)
+
+            # Disable on container side
+            subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ethtool", "-K", veth_cont, "tx", "off", "rx", "off"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ethtool", "-K", veth_cont, "tso", "off", "gso", "off"], check=False, stderr=subprocess.DEVNULL)
+            subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ethtool", "-K", veth_cont, "gro", "off", "lro", "off"], check=False, stderr=subprocess.DEVNULL)
 
             # Verify the interface actually exists in the container
             verify_cmd = ["docker", "exec", container_name, "ip", "addr", "show", "eth1"]
