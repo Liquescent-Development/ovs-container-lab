@@ -881,6 +881,7 @@ class OVNManager:
 
         successful = 0
         failed = 0
+        skipped = 0
         for config in container_config:
             # Check if container exists
             result = subprocess.run(["docker", "ps", "-q", "-f", f"name={config['name']}"], capture_output=True, text=True)
@@ -894,11 +895,18 @@ class OVNManager:
                     failed += 1
                     logger.error(f"FAILED to bind container {config['name']} to OVN")
             else:
-                logger.warning(f"Container {config['name']} not found")
-                failed += 1
+                # Don't count missing containers as failures - they might not be started yet
+                if config['name'].startswith("traffic-gen"):
+                    logger.debug(f"Traffic generator {config['name']} not started yet, skipping")
+                    skipped += 1
+                else:
+                    logger.warning(f"Container {config['name']} not found")
+                    failed += 1
 
         if failed > 0:
-            logger.error(f"Container networking setup FAILED: {successful} successful, {failed} failed")
+            logger.error(f"Container networking setup had failures: {successful} successful, {failed} ACTUAL failures, {skipped} skipped")
+        elif skipped > 0:
+            logger.info(f"Container networking setup complete: {successful} containers bound successfully ({skipped} traffic generators not started yet)")
         else:
             logger.info(f"Container networking setup complete: {successful} containers bound successfully")
 

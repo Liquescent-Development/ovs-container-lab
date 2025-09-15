@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # OVN SDN Controller (central control plane)
   ovn-central:
@@ -97,7 +95,7 @@ services:
 
 
   # ==================== TEST CONTAINERS - VPC A ====================
-  
+
   vpc-a-web:
     build: ./vpc-container
     container_name: vpc-a-web
@@ -147,7 +145,7 @@ services:
       - "tier=db"
 
   # ==================== TEST CONTAINERS - VPC B ====================
-  
+
   vpc-b-web:
     build: ./vpc-container
     container_name: vpc-b-web
