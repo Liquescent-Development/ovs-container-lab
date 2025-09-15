@@ -215,8 +215,8 @@ traffic-start:
 	@sleep 3
 	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic build"
 	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic up -d"
-	@echo "Connecting traffic generators to VPC test subnets..."
-	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py bind-containers"
+	@echo "Connecting ONLY traffic generators to VPC test subnets (not rebinding other containers)..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py bind-traffic-generators"
 	@echo "Traffic generators ready (traffic-gen-a in VPC-A, traffic-gen-b in VPC-B)"
 	@echo "Use 'make traffic-run' to generate traffic"
 

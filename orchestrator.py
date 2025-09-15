@@ -637,6 +637,8 @@ class OVNManager:
 
                 self.run_nbctl(["lsp-add", switch_name, port_name])
                 self.run_nbctl(["lsp-set-addresses", port_name, f"{mac_address} {ip_address}"])
+                # CRITICAL: Set port security to match addresses or traffic will be dropped!
+                self.run_nbctl(["lsp-set-port-security", port_name, f"{mac_address} {ip_address}"])
 
                 # Set tenant ownership on the port
                 tenant_id = self.get_tenant_from_vpc(container_name)
@@ -899,6 +901,49 @@ class OVNManager:
             logger.error(f"Container networking setup FAILED: {successful} successful, {failed} failed")
         else:
             logger.info(f"Container networking setup complete: {successful} containers bound successfully")
+
+    def setup_traffic_generators_only(self):
+        """Set up OVN networking ONLY for traffic generator containers"""
+        logger.info("Setting up traffic generator networking via OVN...")
+
+        # Traffic generator config only
+        traffic_gen_config = [
+            {"name": "traffic-gen-a", "switch": "ls-vpc-a-test", "ip": "10.0.4.10"},
+            {"name": "traffic-gen-b", "switch": "ls-vpc-b-test", "ip": "10.1.4.10"},
+        ]
+
+        successful = 0
+        failed = 0
+        for config in traffic_gen_config:
+            # Check if container exists
+            result = subprocess.run(["docker", "ps", "-q", "-f", f"name={config['name']}"], capture_output=True, text=True)
+            if result.stdout.strip():
+                # Check if already has network - BE IDEMPOTENT!
+                check_cmd = ["docker", "exec", config['name'], "ip", "link", "show", "eth1"]
+                check_result = subprocess.run(check_cmd, capture_output=True, text=True)
+                if check_result.returncode == 0:
+                    logger.info(f"Traffic generator {config['name']} already has network interface, skipping")
+                    successful += 1
+                    continue
+
+                # Generate a MAC address for the container
+                mac_address = self.generate_mac_address()
+                success = self.bind_container_to_ovn(config["name"], config["switch"], config["ip"], mac_address)
+                if success:
+                    successful += 1
+                else:
+                    failed += 1
+                    logger.error(f"FAILED to bind traffic generator {config['name']} to OVN")
+            else:
+                logger.warning(f"Traffic generator {config['name']} not found")
+                failed += 1
+
+        if failed > 0:
+            logger.error(f"Traffic generator setup FAILED: {successful} successful, {failed} failed")
+            return False
+        else:
+            logger.info(f"Traffic generator setup complete: {successful} generators bound successfully")
+            return True
 
 
 # DockerNetworkManager removed - was trying to use non-existent "openvswitch" driver
@@ -1441,6 +1486,9 @@ def main():
     # Bind-containers command
     bind_parser = subparsers.add_parser("bind-containers", help="Bind containers to OVN")
 
+    # Bind-traffic-generators command
+    bind_traffic_parser = subparsers.add_parser("bind-traffic-generators", help="Bind ONLY traffic generator containers to OVN")
+
     # Setup-monitoring command
     monitoring_parser = subparsers.add_parser("setup-monitoring", help="Setup monitoring exporters on host")
 
@@ -1494,6 +1542,11 @@ def main():
     elif args.command == "bind-containers":
         ovn = OVNManager()
         ovn.setup_container_networking()
+
+    elif args.command == "bind-traffic-generators":
+        ovn = OVNManager()
+        success = ovn.setup_traffic_generators_only()
+        return 0 if success else 1
 
     elif args.command == "setup-monitoring":
         monitor = MonitoringManager()
