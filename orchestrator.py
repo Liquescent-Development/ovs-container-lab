@@ -997,6 +997,14 @@ class TestRunner:
         # 3. Check traffic generators have network interfaces
         print("\n3. Checking traffic generator network interfaces...")
         for gen in traffic_gens:
+            # First check if container exists before trying to exec into it
+            check_cmd = ["docker", "ps", "-q", "-f", f"name={gen}"]
+            check_result = subprocess.run(check_cmd, capture_output=True, text=True)
+            if not check_result.stdout.strip():
+                print(f"  ✗ {gen} is not running - skipping interface check")
+                failed += 1
+                continue
+
             cmd = ["docker", "exec", gen, "ip", "addr", "show", "eth1"]
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode == 0 and "inet " in result.stdout:
@@ -1050,6 +1058,14 @@ class TestRunner:
         ]
 
         for source, target_ip, description in connectivity_tests:
+            # Check if source container exists first
+            check_cmd = ["docker", "ps", "-q", "-f", f"name={source}"]
+            check_result = subprocess.run(check_cmd, capture_output=True, text=True)
+            if not check_result.stdout.strip():
+                print(f"  ✗ {description} - source container not running")
+                failed += 1
+                continue
+
             cmd = ["docker", "exec", source, "ping", "-c", "1", "-W", "2", target_ip]
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode == 0:
@@ -1069,9 +1085,17 @@ class TestRunner:
         ]
 
         for source, target_ip, port, description in port_tests:
+            # Check if source container exists first
+            check_cmd = ["docker", "ps", "-q", "-f", f"name={source}"]
+            check_result = subprocess.run(check_cmd, capture_output=True, text=True)
+            if not check_result.stdout.strip():
+                print(f"  ✗ {description} (port {port}) - source container not running")
+                failed += 1
+                continue
+
             cmd = ["docker", "exec", source, "nc", "-zv", "-w", "2", target_ip, port]
-            result = subprocess.run(cmd, capture_output=True, text=True, stderr=subprocess.STDOUT)
-            if "succeeded" in result.stdout or "open" in result.stdout:
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            if result.stdout and ("succeeded" in result.stdout or "open" in result.stdout):
                 print(f"  ✓ {description} (port {port})")
                 passed += 1
             else:
