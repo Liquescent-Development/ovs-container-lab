@@ -36,12 +36,12 @@ RUN wget -O /usr/local/bin/ovn-docker-overlay-driver \
     && sed -i 's/output = output\[0\]\.strip()/output = output[0].decode("utf-8").strip() if isinstance(output[0], bytes) else output[0].strip()/' /usr/local/bin/ovn-docker-overlay-driver \
     && chmod +x /usr/local/bin/ovn-docker-overlay-driver
 
-# Install OVN exporter v2.1.1
+# Install OVN exporter v2.1.2
 # Download the appropriate binary for the architecture
 # dpkg returns: amd64 or arm64, but release uses: x86_64 or arm64
 RUN ARCH=$(dpkg --print-architecture | sed 's/amd64/x86_64/g') && \
     wget -O /tmp/ovn_exporter.tar.gz \
-    https://github.com/Liquescent-Development/ovn_exporter/releases/download/v2.1.1/ovn-exporter_2.1.1_linux_${ARCH}.tar.gz && \
+    https://github.com/Liquescent-Development/ovn_exporter/releases/download/v2.1.2/ovn-exporter_2.1.2_linux_${ARCH}.tar.gz && \
     tar -xzf /tmp/ovn_exporter.tar.gz -C /usr/local/bin/ && \
     rm /tmp/ovn_exporter.tar.gz && \
     chmod +x /usr/local/bin/ovn-exporter

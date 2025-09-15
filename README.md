@@ -8,24 +8,24 @@
 # Install Lima (lightweight VM for macOS)
 brew install lima
 
-# Start everything (VM + containers)
+# Start everything (VM + containers + networking)
 make up
 # First time: Lima will prompt you to confirm VM creation
 # Select "Proceed with the current configuration" and press Enter
 # Initial setup takes ~5 minutes to download Ubuntu and install everything
 
-# Check status
-make status
+# Verify everything is working
+make check
+# Runs comprehensive diagnostics: OVS, OVN, containers, NAT gateway
 
-# Test connectivity (internal + external)
-make test
-# Tests VPC-to-VPC, intra-VPC, and internet connectivity
+# Generate traffic
+make traffic-run      # Normal traffic patterns
+make traffic-chaos    # Heavy stress testing with network failures
+make traffic-stop     # Stop all traffic generation
 
 # Access Grafana from your Mac
 open http://localhost:3000
-
-# SSH into VM if needed
-make lima-ssh
+# Or use: make dashboard
 
 # Clean up everything
 make clean
@@ -86,47 +86,101 @@ This takes about 5 minutes on first run. Subsequent starts take only seconds.
 
 | Command | Description |
 |---------|------------|
-| `make up` | Start Lima VM and entire stack with NAT Gateway |
+| `make up` | Complete setup: VM, containers, OVN topology, monitoring |
 | `make down` | Stop containers (VM stays running) |
-| `make status` | Show VM and container status |
-| `make test` | Run full connectivity tests (10 tests: 6 internal, 4 external) |
+| `make status` | Show VM, container, and OVS/OVN status |
+| `make check` | Run comprehensive network diagnostics |
+| `make test` | Run connectivity tests between containers |
 | `make clean` | Delete VM and everything |
 
-## Lima VM Control
+## Traffic Generation & Chaos Engineering
 
 | Command | Description |
 |---------|------------|
-| `make lima-start` | Start/create the Lima VM |
-| `make lima-ssh` | SSH into the Lima VM |
-| `make lima-stop` | Stop the Lima VM |
-| `make lima-delete` | Delete the Lima VM |
-| `make install-lima` | Install Lima via Homebrew |
+| `make traffic-run` | Generate normal traffic patterns |
+| `make traffic-chaos` | Heavy traffic + network failures (5 min) |
+| `make traffic-stop` | Stop all traffic generation |
+| `make chaos-loss` | Simulate 30% packet loss (1 min) |
+| `make chaos-delay` | Add 100ms network delay (1 min) |
+| `make chaos-bandwidth` | Limit bandwidth to 1mbit (1 min) |
+| `make chaos-partition` | Create network partition (30s) |
+| `make chaos-corruption` | Introduce packet corruption (1 min) |
+| `make chaos-duplication` | Introduce packet duplication (1 min) |
 
-## Container Networking
+## Configuration
 
-| Command | Description |
-|---------|------------|
-| `make attach` | Attach test containers to OVS |
-| `make test-ping` | Test container connectivity |
-| `make test-ovn` | Show OVN configuration |
+The lab supports multiple network configurations via YAML files:
 
-## Connectivity Test Suite
+```bash
+# Use default configuration (network-config.yaml)
+make up
 
-When you run `make test`, it validates:
+# Use a specific configuration
+NETWORK_CONFIG=network-config-simple.yaml make up
+NETWORK_CONFIG=network-config-multihost.yaml make up
+```
 
-**Internal Connectivity (6 tests)**:
-- VPC-A: web → app tier
-- VPC-A: app → db tier
-- VPC-B: web → app tier
-- VPC-B: app → db tier
-- Inter-VPC: A-web → B-web
-- Inter-VPC: A-app → B-app
+### Configuration Files
 
-**External Connectivity (4 tests)**:
-- VPC-A → Internet (8.8.8.8)
-- VPC-B → Internet (8.8.8.8)
-- VPC-A → Cloudflare DNS (1.1.1.1)
-- VPC-B → Cloudflare DNS (1.1.1.1)
+- `network-config.yaml` - Default production-like config
+- `network-config-simple.yaml` - Single-host development setup
+- Custom configs can define:
+  - Multiple hosts and chassis
+  - VPC topologies and subnets
+  - Container placement and IPs
+  - Persistent MAC addresses
+  - OVN clustering for HA
+
+## Network Diagnostics
+
+The `make check` command runs comprehensive diagnostics:
+
+**OVS Bridge Status**:
+- Bridge existence and port count
+- Interface ID verification
+
+**OVN Logical Configuration**:
+- Logical routers and switches
+- NAT gateway configuration
+
+**OVN Port Bindings**:
+- All ports bound to chassis
+- Proper MAC address assignment
+
+**Container Connectivity**:
+- Gateway reachability
+- ARP resolution
+
+**NAT Gateway Status**:
+- Container running
+- MASQUERADE rules
+- External connectivity
+
+## Orchestrator Commands
+
+The orchestrator (`orchestrator.py`) provides fine-grained control:
+
+```bash
+# Run from inside the VM (make shell-vm)
+cd ~/code/ovs-container-lab
+
+# Complete setup with proper ordering
+sudo python3 orchestrator.py up
+
+# Individual operations
+sudo python3 orchestrator.py setup              # Create OVN topology
+sudo python3 orchestrator.py setup-chassis      # Configure OVS chassis
+sudo python3 orchestrator.py bind-containers    # Bind containers to OVN
+sudo python3 orchestrator.py reconcile          # Fix broken connections
+
+# Diagnostics
+sudo python3 orchestrator.py check              # Full diagnostics
+sudo python3 orchestrator.py test               # Connectivity tests
+
+# Chaos engineering
+sudo python3 orchestrator.py chaos packet-loss --duration 60
+sudo python3 orchestrator.py chaos latency --duration 60
+```
 
 ## Monitoring (Accessible from macOS)
 
@@ -136,25 +190,24 @@ When you run `make test`, it validates:
 | Prometheus | http://localhost:9090 | - |
 | OVS Metrics | http://localhost:9475 | - |
 
-## Development
+## Development & Debugging
 
 ```bash
-# Get a shell in the VM
-make lima-ssh
+# Shell access
+make shell-vm     # SSH into Lima VM
+make shell-ovn    # Shell into OVN container
+make shell-ovs    # Shell into OVS container
+
+# Monitoring
+make logs         # Follow container logs
+make dashboard    # Open Grafana (http://localhost:3000)
+make metrics      # Show current OVS metrics
 
 # Inside the VM
 cd ~/code/ovs-container-lab
-
-# Attach a container manually
-sudo ovs-docker add-port ovs-br0 eth1 my-container
-
-# Or use the standard OVS tools
-sudo ovs-vsctl show
-sudo ovs-ofctl dump-flows ovs-br0
-
-# Shell into containers from Mac
-make shell-ovn
-make shell-ovs
+sudo ovs-vsctl show              # OVS configuration
+sudo docker exec ovn-central ovn-nbctl show  # OVN logical topology
+sudo docker exec ovn-central ovn-sbctl show  # OVN physical bindings
 ```
 
 ## How It Works (SDN Architecture)
@@ -164,7 +217,7 @@ make shell-ovs
 3. **NAT Gateway**: Provides external internet connectivity for all VPCs
 4. **GENEVE Tunnels**: Automatic overlay networking between VPCs
 5. **Container Integration**: Each container bound to an OVN logical switch port
-6. **Automated Setup**: `orchestrator.py` handles all OVN/OVS/NAT configuration
+6. **Orchestrator**: Python-based automation with proper error handling and verification
 
 ### Network Flow Types
 
@@ -183,18 +236,22 @@ make shell-ovs
 
 ```
 ovs-container-lab/
-├── lima.yaml           # Lima VM configuration
-├── Makefile            # Control from macOS
-├── docker-compose.yml  # Container stack
-├── orchestrator.py     # Main automation script
+├── lima.yaml                    # Lima VM configuration
+├── Makefile                     # Simplified control commands
+├── docker-compose.yml           # Container stack with profiles
+├── orchestrator.py              # Main automation with error handling
+├── network_config_manager.py    # Configuration parser and validator
+├── network-config.yaml          # Default network topology
+├── network-config-simple.yaml   # Single-host dev configuration
+├── CONFIG_SYSTEM.md            # Configuration documentation
 ├── scripts/
-│   ├── attach-containers.sh  # Container-to-OVS attachment
-│   └── test-connectivity.sh   # Connectivity tests
-├── ovs-container/      # OVS container config
-├── ovn-container/      # OVN controller config
-├── nat-gateway/        # NAT Gateway for external access
-├── grafana/            # Monitoring dashboards
-└── prometheus.yml      # Metrics configuration
+│   ├── ovs-docker-*.sh         # OVS-Docker integration
+│   └── network-simulation/      # Traffic and chaos tools
+├── ovn-container/               # OVN control plane
+├── nat-gateway/                 # External connectivity
+├── traffic-generator/           # Traffic generation tools
+├── grafana/                     # Monitoring dashboards
+└── prometheus.yml               # Metrics configuration
 ```
 
 ## Troubleshooting
@@ -261,27 +318,6 @@ docker exec vpc-b-web curl https://www.google.com
 make lima-ssh
 sudo tcpdump -i ovs-br0 -w capture.pcap
 ```
-
-## Lima vs Other Solutions
-
-| Feature | Docker Desktop | VirtualBox+Vagrant | Lima |
-|---------|---------------|--------------------|------|
-| Performance | ❌ Slow | ❌ Heavy | ✅ Fast native |
-| Resource Usage | ❌ High | ❌ Very High | ✅ Lightweight |
-| macOS Integration | ⚠️ Limited | ❌ Poor | ✅ Excellent |
-| Network namespaces | ❌ Hidden | ✅ Full access | ✅ Full access |
-| Veth pairs | ❌ Can't create | ✅ Works | ✅ Works |
-| OVS kernel module | ❌ Not available | ✅ Available | ✅ Available |
-| Setup complexity | ✅ Simple | ❌ Complex | ✅ Simple |
-
-## Why Lima is Better
-
-1. **Native Performance**: Uses Apple's Virtualization.framework
-2. **Lightweight**: No VirtualBox overhead
-3. **Fast Boot**: VM starts in seconds
-4. **Automatic File Sharing**: SSHFS mounts work seamlessly
-5. **Built for macOS**: Designed specifically for Mac users
-6. **Simple CLI**: Clean, easy-to-use commands
 
 ## License
 

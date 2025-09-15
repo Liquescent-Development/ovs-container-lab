@@ -1,1 +1,7 @@
 CLAUDE.md
+# Python
+venv/
+__pycache__/
+*.pyc
+.network-state.json
+IMPROVEMENTS.md

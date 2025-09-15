@@ -16,6 +16,16 @@ from typing import Dict, List, Optional
 import os
 import random
 from datetime import datetime, timezone
+from pathlib import Path
+
+# Import network config manager if available
+try:
+    from network_config_manager import NetworkConfigManager
+    CONFIG_MANAGER_AVAILABLE = True
+except ImportError:
+    CONFIG_MANAGER_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning("network_config_manager not available, using legacy configuration")
 
 # Configure logging
 logging.basicConfig(
@@ -26,48 +36,337 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class NetworkReconciler:
+    """Handles network state reconciliation for containers"""
+
+    def __init__(self, ovn_manager):
+        self.ovn = ovn_manager
+        self.logger = logging.getLogger(__name__)
+
+    def get_container_network_state(self, container_name: str) -> dict:
+        """Check the network state of a container"""
+        state = {
+            "exists": False,
+            "has_interface": False,
+            "ovs_port_exists": False,
+            "ovn_port_exists": False,
+            "ip_address": None,
+            "needs_repair": False
+        }
+
+        # Check if container exists and is running
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Running}}", container_name],
+                capture_output=True, text=True, check=True
+            )
+            state["exists"] = result.stdout.strip() == "true"
+        except subprocess.CalledProcessError:
+            return state
+
+        if not state["exists"]:
+            return state
+
+        # Check if container has eth1 interface
+        cmd = ["docker", "exec", container_name, "ip", "link", "show", "eth1"]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        state["has_interface"] = (result.returncode == 0)
+
+        # Check if veth exists in OVS (need to run inside ovs container)
+        # Special handling for traffic generators to avoid name collision
+        if container_name.startswith("traffic-gen"):
+            veth_name = f"veth-tg-{container_name[-1]}"
+        else:
+            veth_name = f"veth-{container_name[:8]}"
+        result = subprocess.run(
+            ["docker", "exec", "ovs", "ovs-vsctl", "list-ports", "br-int"],
+            capture_output=True, text=True
+        )
+        state["ovs_port_exists"] = veth_name in result.stdout
+
+        # Check if OVN port exists
+        port_name = f"lsp-{container_name}"
+        try:
+            self.ovn.run_nbctl(["lsp-get-addresses", port_name], quiet_errors=True)
+            state["ovn_port_exists"] = True
+        except subprocess.CalledProcessError:
+            state["ovn_port_exists"] = False
+
+        # Determine if repair is needed
+        state["needs_repair"] = state["exists"] and (
+            not state["has_interface"] or
+            not state["ovs_port_exists"] or
+            not state["ovn_port_exists"]
+        )
+
+        return state
+
+    def cleanup_stale_ovs_ports(self):
+        """Remove OVS ports for containers that no longer exist"""
+        self.logger.info("Cleaning up stale OVS ports...")
+
+        # Get all OVS ports (from inside OVS container)
+        result = subprocess.run(
+            ["docker", "exec", "ovs", "ovs-vsctl", "list-ports", "br-int"],
+            capture_output=True, text=True
+        )
+
+        if result.returncode != 0:
+            return
+
+        ports = result.stdout.strip().split('\n')
+
+        for port in ports:
+            if port.startswith("veth-"):
+                # Extract container name from veth name
+                container_name_prefix = port[5:]  # Remove "veth-" prefix
+
+                # Check if any container matches this prefix
+                result = subprocess.run(
+                    ["docker", "ps", "--format", "{{.Names}}"],
+                    capture_output=True, text=True
+                )
+                container_names = result.stdout.strip().split('\n')
+
+                # Check if any running container matches
+                port_has_container = any(
+                    name[:8] == container_name_prefix
+                    for name in container_names if name
+                )
+
+                if not port_has_container:
+                    self.logger.info(f"Removing stale OVS port: {port}")
+                    subprocess.run(
+                        ["docker", "exec", "ovs", "ovs-vsctl", "del-port", "br-int", port],
+                        check=False
+                    )
+
+    def cleanup_stale_ovn_ports(self):
+        """Remove OVN logical ports for containers that no longer exist"""
+        self.logger.info("Cleaning up stale OVN ports...")
+
+        # Get all running containers
+        result = subprocess.run(
+            ["docker", "ps", "--format", "{{.Names}}"],
+            capture_output=True, text=True
+        )
+        running_containers = set(result.stdout.strip().split('\n'))
+
+        # Get all logical switches
+        switches = self.ovn.run_nbctl(["ls-list"]).strip().split('\n')
+
+        for switch_line in switches:
+            if switch_line:
+                switch_name = switch_line.split()[1].strip('()')
+
+                # Get ports on this switch
+                ports = self.ovn.run_nbctl(["lsp-list", switch_name]).strip().split('\n')
+
+                for port_line in ports:
+                    if port_line and port_line.startswith("lsp-"):
+                        port_name = port_line.split()[1].strip('()')
+                        container_name = port_name[4:]  # Remove "lsp-" prefix
+
+                        if container_name not in running_containers:
+                            self.logger.info(f"Removing stale OVN port: {port_name}")
+                            try:
+                                self.ovn.run_nbctl(["lsp-del", port_name])
+                            except subprocess.CalledProcessError:
+                                pass
+
+    def reconcile_container(self, container_name: str, ip_address: str, switch_name: str, mac_address: Optional[str] = None):
+        """Reconcile network state for a single container"""
+        state = self.get_container_network_state(container_name)
+
+        # Get MAC from config if available
+        if not mac_address and self.ovn.config_manager:
+            container_config = self.ovn.config_manager.get_container_config(container_name)
+            if container_config:
+                mac_address = container_config.mac
+
+        if not state["exists"]:
+            self.logger.info(f"Container {container_name} does not exist, skipping")
+            return False
+
+        if not state["needs_repair"]:
+            self.logger.info(f"Container {container_name} network is healthy")
+            return True
+
+        self.logger.info(f"Repairing network for container {container_name}")
+
+        # Always clean up ALL existing state before reconnecting
+        # This ensures we don't have partial or inconsistent configurations
+
+        # Get container PID for cleanup
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Pid}}", container_name],
+                capture_output=True, text=True, check=True
+            )
+            container_pid = result.stdout.strip()
+        except subprocess.CalledProcessError:
+            self.logger.error(f"Failed to get PID for container {container_name}")
+            return False
+
+        # Clean up container's eth1 interface if it exists
+        if state["has_interface"]:
+            self.logger.info(f"Removing existing eth1 interface from container {container_name}")
+            subprocess.run(
+                ["sudo", "nsenter", "-t", container_pid, "-n", "ip", "link", "delete", "eth1"],
+                check=False, stderr=subprocess.DEVNULL
+            )
+
+        # Clean up OVS port
+        # Special handling for traffic generators to avoid name collision
+        if container_name.startswith("traffic-gen"):
+            veth_name = f"veth-tg-{container_name[-1]}"
+        else:
+            veth_name = f"veth-{container_name[:8]}"
+        if state["ovs_port_exists"]:
+            self.logger.info(f"Removing existing OVS port {veth_name}")
+            subprocess.run(
+                ["sudo", "ovs-vsctl", "del-port", "br-int", veth_name],
+                check=False, stderr=subprocess.DEVNULL
+            )
+
+        # Clean up host veth interface if it exists
+        subprocess.run(
+            ["sudo", "ip", "link", "delete", veth_name],
+            check=False, stderr=subprocess.DEVNULL
+        )
+
+        # Clean up OVN logical port
+        port_name = f"lsp-{container_name}"
+        if state["ovn_port_exists"]:
+            self.logger.info(f"Removing existing OVN port {port_name}")
+            try:
+                self.ovn.run_nbctl(["lsp-del", port_name])
+            except subprocess.CalledProcessError:
+                pass
+
+        # Now reconnect from scratch with MAC address
+        if self.ovn.connect_container_to_bridge(container_name, ip_address, "br-int", mac_address):
+            if self.ovn.bind_container_to_ovn(container_name, switch_name, ip_address, mac_address):
+                self.logger.info(f"Successfully repaired network for {container_name}")
+                return True
+
+        self.logger.error(f"Failed to repair network for {container_name}")
+        return False
+
+    def reconcile_all(self):
+        """Reconcile network state for all containers"""
+        self.logger.info("Starting network reconciliation...")
+
+        # First, clean up stale ports
+        self.cleanup_stale_ovs_ports()
+        self.cleanup_stale_ovn_ports()
+
+        # Get container configurations from config manager
+        containers = []
+
+        if self.ovn.config_manager:
+            # Use configuration file
+            for container_name, container_config in self.ovn.config_manager.containers.items():
+                switch_name = container_config.switch
+                ip_address = container_config.ip
+                containers.append((container_name, ip_address, switch_name))
+        else:
+            # Fallback to hardcoded for backwards compatibility
+            self.logger.warning("No config manager, using hardcoded container list")
+            containers = [
+                # VPC-A containers
+                ("vpc-a-web", "10.0.1.10", "ls-vpc-a-web"),
+                ("vpc-a-app", "10.0.2.10", "ls-vpc-a-app"),
+                ("vpc-a-db", "10.0.3.10", "ls-vpc-a-db"),
+                ("traffic-gen-a", "10.0.4.10", "ls-vpc-a-test"),
+
+                # VPC-B containers
+                ("vpc-b-web", "10.1.1.10", "ls-vpc-b-web"),
+                ("vpc-b-app", "10.1.2.10", "ls-vpc-b-app"),
+                ("vpc-b-db", "10.1.3.10", "ls-vpc-b-db"),
+                ("traffic-gen-b", "10.1.4.10", "ls-vpc-b-test"),
+
+                # NAT Gateway
+                ("nat-gateway", "192.168.100.254", "ls-transit"),
+            ]
+
+        success_count = 0
+        fail_count = 0
+
+        for container_name, ip_address, switch_name in containers:
+            try:
+                if self.reconcile_container(container_name, ip_address, switch_name):
+                    success_count += 1
+                else:
+                    fail_count += 1
+            except Exception as e:
+                self.logger.error(f"Error reconciling {container_name}: {e}")
+                fail_count += 1
+
+        self.logger.info(f"Reconciliation complete: {success_count} successful, {fail_count} failed")
+
+        # Restart OVN controller to ensure flows are properly installed
+        if success_count > 0:
+            self.logger.info("Restarting OVN controller to apply flow changes...")
+            subprocess.run(["sudo", "systemctl", "restart", "ovn-controller"], check=False)
+            import time
+            time.sleep(2)  # Give controller time to reconnect and install flows
+
+        return fail_count == 0
+
+
 class OVNManager:
     """Manages OVN topology and configuration"""
 
-    def __init__(self):
+    def __init__(self, config_manager=None):
+        # Use config manager if available
+        self.config_manager = config_manager
+
         # Since we're running ovn-nbctl INSIDE the ovn-central container via docker exec,
         # we use 127.0.0.1 to connect to the local OVN databases
-        self.nb_db = "tcp://127.0.0.1:6641"
-        self.sb_db = "tcp://127.0.0.1:6642"
+        if config_manager and config_manager.ovn_cluster:
+            # Use cluster connection strings
+            self.nb_db = config_manager.ovn_cluster.nb_connection
+            self.sb_db = config_manager.ovn_cluster.sb_connection
+        else:
+            # Default single-node setup
+            self.nb_db = "tcp://127.0.0.1:6641"
+            self.sb_db = "tcp://127.0.0.1:6642"
 
         # Tenant mapping for VPCs
-        self.tenant_mapping = {
-            "vpc-a": "tenant-1",
-            "vpc-b": "tenant-2"
-        }
-        self.tenant_info = {
-            "tenant-1": {
-                "name": "Customer A",
-                "vpc_id": "vpc-a",
-                "billing_id": "cust-001",
-                "environment": "production"
-            },
-            "tenant-2": {
-                "name": "Customer B",
-                "vpc_id": "vpc-b",
-                "billing_id": "cust-002",
-                "environment": "production"
+        if config_manager:
+            # Build from config
+            self.tenant_mapping = {}
+            self.tenant_info = {}
+            for vpc_name, vpc in config_manager.vpcs.items():
+                self.tenant_mapping[vpc_name] = vpc.tenant
+                if vpc.tenant not in self.tenant_info:
+                    self.tenant_info[vpc.tenant] = {
+                        "name": f"Customer {vpc.tenant}",
+                        "vpc_id": vpc_name,
+                        "billing_id": f"cust-{vpc.tenant}",
+                        "environment": "production"
+                    }
+        else:
+            # Legacy hardcoded mapping
+            self.tenant_mapping = {
+                "vpc-a": "tenant-1",
+                "vpc-b": "tenant-2"
             }
-        }
-        self.tenant_info = {
-            "tenant-1": {
-                "name": "Customer A",
-                "vpc_id": "vpc-a",
-                "billing_id": "cust-001",
-                "environment": "production"
-            },
-            "tenant-2": {
-                "name": "Customer B",
-                "vpc_id": "vpc-b",
-                "billing_id": "cust-002",
-                "environment": "production"
+            self.tenant_info = {
+                "tenant-1": {
+                    "name": "Customer A",
+                    "vpc_id": "vpc-a",
+                    "billing_id": "cust-001",
+                    "environment": "production"
+                },
+                "tenant-2": {
+                    "name": "Customer B",
+                    "vpc_id": "vpc-b",
+                    "billing_id": "cust-002",
+                    "environment": "production"
+                }
             }
-        }
 
     def run_nbctl(self, args: List[str], quiet_errors: bool = False) -> str:
         """Execute ovn-nbctl command inside ovn-central container"""
@@ -108,6 +407,124 @@ class OVNManager:
     def setup_topology(self, create_containers=False):
         """Configure OVN logical topology for multi-VPC"""
         logger.info("Setting up OVN topology...")
+
+        if self.config_manager:
+            self._setup_topology_from_config()
+        else:
+            self._setup_topology_hardcoded()
+
+        # Configure external connectivity for gateway router
+        self._setup_external_connectivity()
+
+        logger.info("OVN topology setup complete")
+
+        # Create test containers if requested
+        if create_containers:
+            self.create_test_containers()
+
+    def _setup_topology_from_config(self):
+        """Setup topology based on configuration file"""
+        logger.info("Setting up topology from configuration...")
+
+        # Create gateway router
+        transit_config = self.config_manager.config.get('transit', {})
+        gateway_router = transit_config.get('gateway_router', {})
+        self._create_logical_router(
+            gateway_router.get('name', 'lr-gateway'),
+            "External gateway router",
+            tenant_id="shared"
+        )
+
+        # Create transit switch
+        transit_cidr = transit_config.get('cidr', '192.168.100.0/24')
+        self._create_logical_switch("ls-transit", transit_cidr, tenant_id="shared")
+
+        # Create VPC routers and switches
+        for vpc_name, vpc_config in self.config_manager.vpcs.items():
+            router_name = vpc_config.router['name']
+            tenant_id = vpc_config.tenant
+
+            # Create VPC router
+            self._create_logical_router(router_name, f"{vpc_name} router", tenant_id=tenant_id, vpc_id=vpc_name)
+
+            # Create switches for this VPC
+            for i, switch_config in enumerate(vpc_config.switches):
+                switch_name = switch_config['name']
+                switch_cidr = switch_config['cidr']
+                tier = switch_config.get('tier', 'default')
+                self._create_logical_switch(switch_name, switch_cidr, tenant_id=tenant_id, vpc_id=vpc_name, tier=tier)
+
+                # Connect router to switch
+                # Calculate gateway IP (first IP in subnet)
+                import ipaddress
+                network = ipaddress.ip_network(switch_cidr)
+                gateway_ip = str(list(network.hosts())[0]) + "/" + str(network.prefixlen)
+                # Generate MAC based on VPC and switch index
+                # For vpc-a: 00:00:00:01:01:01, 00:00:00:01:02:01, etc
+                # For vpc-b: 00:00:00:02:01:01, 00:00:00:02:02:01, etc
+                vpc_num = 1 if 'vpc-a' in vpc_name else 2 if 'vpc-b' in vpc_name else 99
+                gateway_mac = f"00:00:00:{vpc_num:02x}:{i+1:02x}:01"
+                self._connect_router_to_switch(router_name, switch_name, gateway_ip, gateway_mac)
+
+            # Connect VPC router to transit network
+            vpc_transit_ip = f"192.168.100.{10 + ord(vpc_name[-1]) - ord('a')}/24"  # vpc-a: .10, vpc-b: .20
+            vpc_transit_mac = f"00:00:00:00:00:{10 + ord(vpc_name[-1]) - ord('a'):02x}"
+            self._connect_router_to_switch(router_name, "ls-transit", vpc_transit_ip, vpc_transit_mac)
+
+        # Connect gateway router to transit
+        self._connect_router_to_switch(
+            gateway_router.get('name', 'lr-gateway'),
+            "ls-transit",
+            "192.168.100.1/24",
+            gateway_router.get('mac', '00:00:00:00:00:01')
+        )
+
+        # Add routes based on VPCs
+        self._setup_routes_from_config()
+
+    def _setup_routes_from_config(self):
+        """Setup routes based on configuration"""
+        logger.info("Adding routes from configuration...")
+
+        gateway_name = self.config_manager.config.get('transit', {}).get('gateway_router', {}).get('name', 'lr-gateway')
+
+        # For each VPC, add routes
+        for vpc_name, vpc_config in self.config_manager.vpcs.items():
+            router_name = vpc_config.router['name']
+            vpc_cidr = vpc_config.cidr
+            vpc_transit_ip = f"192.168.100.{10 + ord(vpc_name[-1]) - ord('a')}"
+
+            # Gateway needs route to VPC
+            self._add_route_if_needed(gateway_name, vpc_cidr, vpc_transit_ip)
+
+            # VPC needs default route to gateway
+            self._add_route_if_needed(router_name, "0.0.0.0/0", "192.168.100.1")
+
+            # Inter-VPC routes
+            for other_vpc_name, other_vpc_config in self.config_manager.vpcs.items():
+                if other_vpc_name != vpc_name:
+                    other_vpc_cidr = other_vpc_config.cidr
+                    other_vpc_transit_ip = f"192.168.100.{10 + ord(other_vpc_name[-1]) - ord('a')}"
+                    self._add_route_if_needed(router_name, other_vpc_cidr, other_vpc_transit_ip)
+
+    def _add_route_if_needed(self, router, prefix, nexthop):
+        """Add route if it doesn't already exist"""
+        try:
+            existing_routes = self.run_nbctl(["lr-route-list", router])
+            if prefix in existing_routes and nexthop in existing_routes:
+                logger.debug(f"Route {prefix} via {nexthop} already exists on {router}")
+            else:
+                self.run_nbctl(["lr-route-add", router, prefix, nexthop])
+                logger.info(f"Added route: {router} {prefix} -> {nexthop}")
+        except subprocess.CalledProcessError as e:
+            if "duplicate" in str(e.stderr):
+                logger.debug(f"Route {prefix} already exists on {router}")
+            else:
+                raise
+
+    def _setup_topology_hardcoded(self):
+        """Fallback to hardcoded topology for backwards compatibility"""
+        logger.warning("Using hardcoded topology - consider using configuration file")
 
         # Create logical routers with tenant ownership
         logger.info("Creating logical routers...")
@@ -167,28 +584,7 @@ class OVNManager:
         ]
 
         for router, prefix, nexthop in routes:
-            try:
-                # Check if route already exists
-                existing_routes = self.run_nbctl(["lr-route-list", router])
-                if prefix in existing_routes and nexthop in existing_routes:
-                    logger.debug(f"Route {prefix} via {nexthop} already exists on {router}")
-                else:
-                    self.run_nbctl(["lr-route-add", router, prefix, nexthop])
-                    logger.info(f"Added route: {router} {prefix} -> {nexthop}")
-            except subprocess.CalledProcessError as e:
-                if "duplicate" in str(e.stderr):
-                    logger.debug(f"Route {prefix} already exists on {router}")
-                else:
-                    raise
-
-        # Configure external connectivity for gateway router
-        self._setup_external_connectivity()
-
-        logger.info("OVN topology setup complete")
-
-        # Create test containers if requested
-        if create_containers:
-            self.create_test_containers()
+            self._add_route_if_needed(router, prefix, nexthop)
 
     def _create_logical_router(self, name: str, comment: str = "", tenant_id: str = "", vpc_id: str = ""):
         """Create a logical router if it doesn't exist with tenant tracking"""
@@ -245,25 +641,44 @@ class OVNManager:
         """Configure external connectivity through NAT Gateway container"""
         logger.info("Configuring external connectivity through NAT Gateway...")
 
+        # Get NAT gateway config if available
+        nat_gateway_config = None
+        if self.config_manager:
+            nat_gateway_config = self.config_manager.get_container_config("nat-gateway")
+
+        if nat_gateway_config:
+            # Use configuration-based values with consistent naming
+            port_name = "lsp-nat-gateway"  # Use standard lsp- prefix for consistency
+            ip_address = nat_gateway_config.ip
+            mac_address = nat_gateway_config.mac
+            switch_name = nat_gateway_config.switch
+            if not switch_name.startswith("ls-"):
+                switch_name = f"ls-{switch_name}"
+        else:
+            # Fallback to defaults if no config
+            port_name = "lsp-nat-gateway"
+            ip_address = "192.168.100.254"
+            mac_address = "02:00:00:00:00:fe"
+            switch_name = "ls-transit"
+
         try:
             # Create OVN logical switch port for NAT Gateway on transit network
-            port_name = "ls-transit-nat-gateway"
-            existing_ports = self.run_nbctl(["lsp-list", "ls-transit"])
+            existing_ports = self.run_nbctl(["lsp-list", switch_name])
             if port_name not in existing_ports:
-                # Use dynamic MAC address
-                self.run_nbctl(["lsp-add", "ls-transit", port_name])
-                self.run_nbctl(["lsp-set-addresses", port_name, "dynamic 192.168.100.254"])
+                # Use configured MAC and IP
+                self.run_nbctl(["lsp-add", switch_name, port_name])
+                self.run_nbctl(["lsp-set-addresses", port_name, f"{mac_address} {ip_address}"])
                 # Disable port security to allow routing of VPC traffic
                 self.run_nbctl(["lsp-set-port-security", port_name, ""])
-                logger.info(f"Created OVN port for NAT Gateway: {port_name}")
+                logger.info(f"Created OVN port for NAT Gateway: {port_name} with MAC {mac_address} and IP {ip_address}")
 
             # Add default route on gateway router to NAT Gateway
             try:
                 existing_routes = self.run_nbctl(["lr-route-list", "lr-gateway"])
                 if "0.0.0.0/0" not in existing_routes:
                     # Route all external traffic to NAT Gateway container
-                    self.run_nbctl(["lr-route-add", "lr-gateway", "0.0.0.0/0", "192.168.100.254"])
-                    logger.info("Added default route to NAT Gateway (192.168.100.254)")
+                    self.run_nbctl(["lr-route-add", "lr-gateway", "0.0.0.0/0", ip_address])
+                    logger.info(f"Added default route to NAT Gateway ({ip_address})")
             except subprocess.CalledProcessError as e:
                 logger.warning(f"Failed to add default route: {e}")
 
@@ -547,9 +962,16 @@ class OVNManager:
 
             return False
 
-    def connect_container_to_bridge(self, container_name: str, ip_address: str, bridge: str = "br-int"):
+    def connect_container_to_bridge(self, container_name: str, ip_address: str, bridge: str = "br-int", mac_address: Optional[str] = None):
         """Connect a container directly to an OVS bridge without OVN"""
         logger.info(f"Connecting {container_name} to bridge {bridge} with IP {ip_address}")
+
+        # Try to get MAC from config if not provided
+        if not mac_address and self.config_manager:
+            container_config = self.config_manager.get_container_config(container_name)
+            if container_config:
+                mac_address = container_config.mac
+                logger.info(f"Using MAC from config: {mac_address}")
 
         try:
             # Get container PID
@@ -564,7 +986,11 @@ class OVNManager:
                 return False
 
             # Create veth pair
-            veth_host = f"veth-{container_name[:8]}"
+            # Special handling for traffic generators to avoid name collision
+            if container_name.startswith("traffic-gen"):
+                veth_host = f"veth-tg-{container_name[-1]}"
+            else:
+                veth_host = f"veth-{container_name[:8]}"
             veth_container = f"eth1"
 
             # Delete any existing veth pair
@@ -582,6 +1008,12 @@ class OVNManager:
 
             # Configure container interface
             subnet_prefix = ".".join(ip_address.split(".")[:-1])
+
+            # Set MAC address if provided
+            if mac_address:
+                logger.info(f"Setting MAC address {mac_address} on {veth_container}")
+                subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "link", "set", veth_container, "address", mac_address], check=True)
+
             subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "addr", "add", f"{ip_address}/24", "dev", veth_container], check=True)
             subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "link", "set", veth_container, "up"], check=True)
 
@@ -589,8 +1021,8 @@ class OVNManager:
             if bridge == "br-int":
                 subprocess.run(["sudo", "nsenter", "-t", container_pid, "-n", "ip", "route", "add", "default", "via", f"{subnet_prefix}.1"], check=False)
 
-            # Add host end to OVS bridge
-            subprocess.run(["sudo", "ovs-vsctl", "add-port", bridge, veth_host], check=True)
+            # Add host end to OVS bridge (use --may-exist to handle if already there)
+            subprocess.run(["sudo", "ovs-vsctl", "--may-exist", "add-port", bridge, veth_host], check=True)
             subprocess.run(["sudo", "ip", "link", "set", veth_host, "up"], check=True)
 
             # Disable checksum offloading to fix TCP with userspace OVS
@@ -620,6 +1052,13 @@ class OVNManager:
         logger.info(f"========================================")
         logger.info(f"Binding container {container_name} to OVN switch {switch_name} with IP {ip_address}")
 
+        # Try to get MAC from config manager first
+        if not mac_address and self.config_manager:
+            container_config = self.config_manager.get_container_config(container_name)
+            if container_config:
+                mac_address = container_config.mac
+                logger.info(f"Using MAC from config: {mac_address}")
+
         # Check if port already exists and if container is already connected
         port_name = f"lsp-{container_name}"
 
@@ -628,8 +1067,8 @@ class OVNManager:
             existing_addresses = self.run_nbctl(["lsp-get-addresses", port_name], quiet_errors=True)
             port_exists = True
             logger.info(f"Port {port_name} already exists with addresses: {existing_addresses}")
-            # Extract MAC from existing port
-            if existing_addresses:
+            # Extract MAC from existing port if we don't have one from config
+            if existing_addresses and not mac_address:
                 mac_address = existing_addresses.split()[0]
         except subprocess.CalledProcessError:
             port_exists = False
@@ -654,8 +1093,14 @@ class OVNManager:
 
                 self.run_nbctl(["lsp-add", switch_name, port_name])
                 self.run_nbctl(["lsp-set-addresses", port_name, f"{mac_address} {ip_address}"])
-                # CRITICAL: Set port security to match addresses or traffic will be dropped!
-                self.run_nbctl(["lsp-set-port-security", port_name, f"{mac_address} {ip_address}"])
+
+                # NAT gateway needs port security disabled to forward traffic from VPCs
+                if container_name == "nat-gateway":
+                    self.run_nbctl(["lsp-set-port-security", port_name, ""])
+                    logger.info(f"Disabled port security for NAT gateway to allow forwarding")
+                else:
+                    # CRITICAL: Set port security to match addresses or traffic will be dropped!
+                    self.run_nbctl(["lsp-set-port-security", port_name, f"{mac_address} {ip_address}"])
 
                 # Set tenant ownership on the port
                 tenant_id = self.get_tenant_from_vpc(container_name)
@@ -684,6 +1129,26 @@ class OVNManager:
                 logger.warning(f"Container {container_name} has eth1 but veth {expected_veth} not in OVS! State inconsistent.")
                 # Don't return - try to fix it
             else:
+                # Set ALL external_ids to bind the OVS port to the OVN logical port
+                logger.info(f"Setting external_ids for existing interface {expected_veth}")
+                tenant_id = self.get_tenant_from_vpc(container_name)
+                if container_name.startswith("traffic-gen-"):
+                    vpc_id = f"vpc-{container_name.split('-')[-1]}"
+                else:
+                    vpc_id = f"vpc-{container_name.split('-')[1]}" if '-' in container_name else ""
+
+                # Set all external_ids at once
+                cmd = [
+                    "sudo", "ovs-vsctl",
+                    "set", "interface", expected_veth,
+                    f"external_ids:iface-id={port_name}",
+                    f"external_ids:tenant-id={tenant_id}",
+                    f"external_ids:container={container_name}"
+                ]
+                if vpc_id:
+                    cmd.append(f"external_ids:vpc-id={vpc_id}")
+
+                subprocess.run(cmd, check=True)
                 return True
 
         # Ensure we have a MAC address for the physical interface
@@ -764,30 +1229,50 @@ class OVNManager:
             # First check if port already exists
             result = subprocess.run(["sudo", "ovs-vsctl", "list-ports", "br-int"], capture_output=True, text=True)
             if veth_host not in result.stdout:
-                # Add port with external_ids in one atomic operation to avoid race condition
-                result = subprocess.run([
+                # Prepare all external_ids for atomic operation
+                tenant_id = self.get_tenant_from_vpc(container_name)
+                if container_name.startswith("traffic-gen-"):
+                    vpc_id = f"vpc-{container_name.split('-')[-1]}"
+                else:
+                    vpc_id = f"vpc-{container_name.split('-')[1]}" if '-' in container_name else ""
+
+                # Add port with ALL external_ids in one atomic operation to avoid race condition
+                cmd = [
                     "sudo", "ovs-vsctl",
                     "add-port", "br-int", veth_host,
-                    "--", "set", "Interface", veth_host, f"external_ids:iface-id={port_name}"
-                ], capture_output=True, text=True)
+                    "--", "set", "Interface", veth_host,
+                    f"external_ids:iface-id={port_name}",
+                    f"external_ids:tenant-id={tenant_id}",
+                    f"external_ids:container={container_name}"
+                ]
+                if vpc_id:
+                    cmd.append(f"external_ids:vpc-id={vpc_id}")
+
+                result = subprocess.run(cmd, capture_output=True, text=True)
                 if result.returncode != 0:
                     logger.error(f"Failed to add port to OVS for {container_name}: {result.stderr}")
                     subprocess.run(["sudo", "ip", "link", "del", veth_host], capture_output=True)
                     return False
             else:
-                # Port exists, just update external_ids
-                subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:iface-id={port_name}"], check=True)
+                # Port exists, update ALL external_ids to ensure consistency
+                tenant_id = self.get_tenant_from_vpc(container_name)
+                if container_name.startswith("traffic-gen-"):
+                    vpc_id = f"vpc-{container_name.split('-')[-1]}"
+                else:
+                    vpc_id = f"vpc-{container_name.split('-')[1]}" if '-' in container_name else ""
 
-            # Also set tenant ownership on the OVS interface
-            tenant_id = self.get_tenant_from_vpc(container_name)
-            subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:tenant-id={tenant_id}"], check=True)
-            # Special handling for traffic generators
-            if container_name.startswith("traffic-gen-"):
-                vpc_id = f"vpc-{container_name.split('-')[-1]}"
-            else:
-                vpc_id = f"vpc-{container_name.split('-')[1]}" if '-' in container_name else ""
-            if vpc_id:
-                subprocess.run(["sudo", "ovs-vsctl", "set", "interface", veth_host, f"external_ids:vpc-id={vpc_id}"], check=True)
+                # Update all external_ids at once
+                cmd = [
+                    "sudo", "ovs-vsctl",
+                    "set", "interface", veth_host,
+                    f"external_ids:iface-id={port_name}",
+                    f"external_ids:tenant-id={tenant_id}",
+                    f"external_ids:container={container_name}"
+                ]
+                if vpc_id:
+                    cmd.append(f"external_ids:vpc-id={vpc_id}")
+
+                subprocess.run(cmd, check=True)
 
             subprocess.run(["sudo", "ip", "link", "set", veth_host, "up"], check=True)
 
@@ -865,12 +1350,15 @@ class OVNManager:
                     break
 
             if nat_gateway_mac:
-                # Update OVN with the actual MAC address
+                # Update OVN with the actual MAC address - use config if available
+                nat_gateway_config = self.config_manager.get_container_config("nat-gateway") if self.config_manager else None
+                ip_address = nat_gateway_config.ip if nat_gateway_config else "192.168.100.254"
+
                 logger.info(f"Updating OVN with NAT Gateway MAC: {nat_gateway_mac}")
                 subprocess.run([
                     "docker", "exec", "ovn-central", "ovn-nbctl",
-                    "lsp-set-addresses", "ls-transit-nat-gateway",
-                    f"{nat_gateway_mac} 192.168.100.254"
+                    "lsp-set-addresses", "lsp-nat-gateway",
+                    f"{nat_gateway_mac} {ip_address}"
                 ], check=False)
 
             # 5. Bind the OVN logical port to the physical interface
@@ -890,10 +1378,10 @@ class OVNManager:
                         "sudo", "ovs-vsctl", "get", "interface", port, "external_ids:container_id"
                     ], capture_output=True, text=True)
                     if "nat-gateway" in check_result.stdout:
-                        # This is our interface, bind it to OVN
+                        # This is our interface, bind it to OVN with consistent naming
                         subprocess.run([
                             "sudo", "ovs-vsctl", "set", "interface", port,
-                            f"external_ids:iface-id=ls-transit-nat-gateway"
+                            f"external_ids:iface-id=lsp-nat-gateway"
                         ], check=False)
                         logger.info(f"NAT Gateway port {port} bound to OVN")
                         break
@@ -910,54 +1398,69 @@ class OVNManager:
             return False
 
     def setup_container_networking(self):
-        """Set up OVN networking for all test containers"""
+        """Set up OVN networking for all test containers (excluding traffic generators)"""
         logger.info("Setting up container networking via OVN...")
 
         # Setup NAT Gateway first
         self.setup_nat_gateway_networking()
 
-        # Container to OVN switch mapping
-        container_config = [
-            # VPC-A containers
-            {"name": "vpc-a-web", "switch": "ls-vpc-a-web", "ip": "10.0.1.10"},
-            {"name": "vpc-a-app", "switch": "ls-vpc-a-app", "ip": "10.0.2.10"},
-            {"name": "vpc-a-db", "switch": "ls-vpc-a-db", "ip": "10.0.3.10"},
-            {"name": "traffic-gen-a", "switch": "ls-vpc-a-test", "ip": "10.0.4.10"},
-            # VPC-B containers
-            {"name": "vpc-b-web", "switch": "ls-vpc-b-web", "ip": "10.1.1.10"},
-            {"name": "vpc-b-app", "switch": "ls-vpc-b-app", "ip": "10.1.2.10"},
-            {"name": "vpc-b-db", "switch": "ls-vpc-b-db", "ip": "10.1.3.10"},
-            {"name": "traffic-gen-b", "switch": "ls-vpc-b-test", "ip": "10.1.4.10"},
-        ]
+        # Get container configuration from config manager or use defaults
+        container_configs = []
+
+        if self.config_manager:
+            # Use configuration file for persistent MACs and IPs
+            logger.info("Using container configuration from config file")
+            for container_name, container_config in self.config_manager.containers.items():
+                # Skip traffic generators - they have their own setup method
+                if container_config.type != "traffic-generator":
+                    container_configs.append({
+                        "name": container_name,
+                        "switch": container_config.switch,
+                        "ip": container_config.ip,
+                        "mac": container_config.mac  # Use persistent MAC from config
+                    })
+        else:
+            # Fallback to hardcoded for backwards compatibility
+            logger.warning("No config manager, using hardcoded container list")
+            container_configs = [
+                # VPC-A containers (no traffic generators here)
+                {"name": "vpc-a-web", "switch": "ls-vpc-a-web", "ip": "10.0.1.10", "mac": None},
+                {"name": "vpc-a-app", "switch": "ls-vpc-a-app", "ip": "10.0.2.10", "mac": None},
+                {"name": "vpc-a-db", "switch": "ls-vpc-a-db", "ip": "10.0.3.10", "mac": None},
+                # VPC-B containers (no traffic generators here)
+                {"name": "vpc-b-web", "switch": "ls-vpc-b-web", "ip": "10.1.1.10", "mac": None},
+                {"name": "vpc-b-app", "switch": "ls-vpc-b-app", "ip": "10.1.2.10", "mac": None},
+                {"name": "vpc-b-db", "switch": "ls-vpc-b-db", "ip": "10.1.3.10", "mac": None},
+            ]
 
         successful = 0
         failed = 0
         skipped = 0
-        for config in container_config:
-            # Check if container exists
+
+        for config in container_configs:
+            # Check if container exists and is running
             result = subprocess.run(["docker", "ps", "-q", "-f", f"name={config['name']}"], capture_output=True, text=True)
             if result.stdout.strip():
-                # Generate a MAC address for the container
-                mac_address = self.generate_mac_address()
-                success = self.bind_container_to_ovn(config["name"], config["switch"], config["ip"], mac_address)
+                # Use MAC from config (persistent) or let bind_container_to_ovn handle it
+                success = self.bind_container_to_ovn(
+                    config["name"],
+                    config["switch"],
+                    config["ip"],
+                    config.get("mac")  # Pass MAC from config, or None to generate
+                )
                 if success:
                     successful += 1
                 else:
                     failed += 1
                     logger.error(f"FAILED to bind container {config['name']} to OVN")
             else:
-                # Don't count missing containers as failures - they might not be started yet
-                if config['name'].startswith("traffic-gen"):
-                    logger.debug(f"Traffic generator {config['name']} not started yet, skipping")
-                    skipped += 1
-                else:
-                    logger.warning(f"Container {config['name']} not found")
-                    failed += 1
+                logger.warning(f"Container {config['name']} not found or not running")
+                skipped += 1
 
         if failed > 0:
-            logger.error(f"Container networking setup had failures: {successful} successful, {failed} ACTUAL failures, {skipped} skipped")
+            logger.error(f"Container networking setup had failures: {successful} successful, {failed} failed, {skipped} not running")
         elif skipped > 0:
-            logger.info(f"Container networking setup complete: {successful} containers bound successfully ({skipped} traffic generators not started yet)")
+            logger.info(f"Container networking setup complete: {successful} containers bound successfully ({skipped} containers not running)")
         else:
             logger.info(f"Container networking setup complete: {successful} containers bound successfully")
 
@@ -965,15 +1468,32 @@ class OVNManager:
         """Set up OVN networking ONLY for traffic generator containers"""
         logger.info("Setting up traffic generator networking via OVN...")
 
-        # Traffic generator config only
-        traffic_gen_config = [
-            {"name": "traffic-gen-a", "switch": "ls-vpc-a-test", "ip": "10.0.4.10"},
-            {"name": "traffic-gen-b", "switch": "ls-vpc-b-test", "ip": "10.1.4.10"},
-        ]
+        # Get traffic generator configuration
+        traffic_gen_configs = []
+
+        if self.config_manager:
+            # Use configuration file for persistent MACs and IPs
+            logger.info("Using traffic generator configuration from config file")
+            for container_name, container_config in self.config_manager.containers.items():
+                # Only include traffic generators
+                if container_config.type == "traffic-generator":
+                    traffic_gen_configs.append({
+                        "name": container_name,
+                        "switch": container_config.switch,
+                        "ip": container_config.ip,
+                        "mac": container_config.mac  # Use persistent MAC from config
+                    })
+        else:
+            # Fallback to hardcoded for backwards compatibility
+            logger.warning("No config manager, using hardcoded traffic generator list")
+            traffic_gen_configs = [
+                {"name": "traffic-gen-a", "switch": "ls-vpc-a-test", "ip": "10.0.4.10", "mac": None},
+                {"name": "traffic-gen-b", "switch": "ls-vpc-b-test", "ip": "10.1.4.10", "mac": None},
+            ]
 
         successful = 0
         failed = 0
-        for config in traffic_gen_config:
+        for config in traffic_gen_configs:
             # Check if container exists
             result = subprocess.run(["docker", "ps", "-q", "-f", f"name={config['name']}"], capture_output=True, text=True)
             if result.stdout.strip():
@@ -985,9 +1505,13 @@ class OVNManager:
                     successful += 1
                     continue
 
-                # Generate a MAC address for the container
-                mac_address = self.generate_mac_address()
-                success = self.bind_container_to_ovn(config["name"], config["switch"], config["ip"], mac_address)
+                # Use MAC from config (persistent) or let bind_container_to_ovn handle it
+                success = self.bind_container_to_ovn(
+                    config["name"],
+                    config["switch"],
+                    config["ip"],
+                    config.get("mac")  # Pass MAC from config, or None to generate
+                )
                 if success:
                     successful += 1
                 else:
@@ -1009,8 +1533,280 @@ class OVNManager:
 # Containers should be attached directly to OVS bridges instead
 
 
+class NetworkChecker:
+    """Comprehensive network state checker"""
+
+    def __init__(self, config_manager=None):
+        self.config_manager = config_manager
+
+    def check_all(self):
+        """Run all network checks"""
+        print("\n" + "="*60)
+        print("NETWORK DIAGNOSTIC CHECK")
+        print("="*60)
+
+        issues = []
+
+        # Check OVS
+        print("\n1. OVS Bridge Status:")
+        print("-" * 40)
+        ovs_issues = self._check_ovs()
+        issues.extend(ovs_issues)
+
+        # Check OVN
+        print("\n2. OVN Logical Configuration:")
+        print("-" * 40)
+        ovn_issues = self._check_ovn()
+        issues.extend(ovn_issues)
+
+        # Check bindings
+        print("\n3. OVN Port Bindings:")
+        print("-" * 40)
+        binding_issues = self._check_bindings()
+        issues.extend(binding_issues)
+
+        # Check connectivity
+        print("\n4. Container Connectivity:")
+        print("-" * 40)
+        conn_issues = self._check_connectivity()
+        issues.extend(conn_issues)
+
+        # Check NAT gateway
+        print("\n5. NAT Gateway Status:")
+        print("-" * 40)
+        nat_issues = self._check_nat_gateway()
+        issues.extend(nat_issues)
+
+        # Summary
+        print("\n" + "="*60)
+        print("DIAGNOSTIC SUMMARY")
+        print("="*60)
+        if issues:
+            print(f"\n❌ Found {len(issues)} issues:\n")
+            for i, issue in enumerate(issues, 1):
+                print(f"  {i}. {issue}")
+        else:
+            print("\n✅ All checks passed!")
+
+        return len(issues) == 0
+
+    def _check_ovs(self):
+        """Check OVS configuration"""
+        issues = []
+
+        # Check if br-int exists
+        result = subprocess.run(["sudo", "ovs-vsctl", "br-exists", "br-int"],
+                              capture_output=True)
+        if result.returncode != 0:
+            print("  ❌ br-int bridge does not exist")
+            issues.append("OVS integration bridge (br-int) missing")
+        else:
+            print("  ✓ br-int bridge exists")
+
+        # Check ports on br-int
+        result = subprocess.run(["sudo", "ovs-vsctl", "list-ports", "br-int"],
+                              capture_output=True, text=True)
+        ports = result.stdout.strip().split('\n') if result.stdout.strip() else []
+        print(f"  ✓ {len(ports)} ports on br-int")
+
+        # Check for external_ids on interfaces
+        missing_iface_id = []
+        for port in ports:
+            if port and not port.startswith("ovn"):  # Skip OVN tunnel ports
+                result = subprocess.run(
+                    ["sudo", "ovs-vsctl", "get", "interface", port, "external_ids:iface-id"],
+                    capture_output=True, text=True
+                )
+                if not result.stdout.strip() or result.returncode != 0:
+                    missing_iface_id.append(port)
+
+        if missing_iface_id:
+            print(f"  ❌ {len(missing_iface_id)} ports missing iface-id: {', '.join(missing_iface_id)}")
+            issues.append(f"OVS ports missing iface-id binding: {', '.join(missing_iface_id)}")
+        else:
+            print("  ✓ All ports have iface-id set")
+
+        return issues
+
+    def _check_ovn(self):
+        """Check OVN logical configuration"""
+        issues = []
+
+        # Check logical routers
+        result = subprocess.run(
+            ["docker", "exec", "ovn-central", "ovn-nbctl", "lr-list"],
+            capture_output=True, text=True
+        )
+        routers = [line.split()[1].strip('()') for line in result.stdout.strip().split('\n') if line]
+        expected_routers = ["lr-gateway", "lr-vpc-a", "lr-vpc-b"]
+        missing_routers = [r for r in expected_routers if r not in routers]
+
+        if missing_routers:
+            print(f"  ❌ Missing routers: {', '.join(missing_routers)}")
+            issues.append(f"Missing logical routers: {', '.join(missing_routers)}")
+        else:
+            print(f"  ✓ All {len(expected_routers)} logical routers present")
+
+        # Check logical switches
+        result = subprocess.run(
+            ["docker", "exec", "ovn-central", "ovn-nbctl", "ls-list"],
+            capture_output=True, text=True
+        )
+        switches = [line.split()[1].strip('()') for line in result.stdout.strip().split('\n') if line]
+        print(f"  ✓ {len(switches)} logical switches configured")
+
+        # Check NAT gateway port
+        result = subprocess.run(
+            ["docker", "exec", "ovn-central", "ovn-nbctl", "lsp-get-addresses", "lsp-nat-gateway"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            print("  ❌ NAT gateway port (lsp-nat-gateway) not found")
+            issues.append("NAT gateway logical port missing")
+        else:
+            print(f"  ✓ NAT gateway port configured: {result.stdout.strip()}")
+
+        return issues
+
+    def _check_bindings(self):
+        """Check OVN port bindings to chassis"""
+        issues = []
+
+        # Get all logical ports - note the type='' needs proper escaping
+        result = subprocess.run(
+            ["docker", "exec", "ovn-central", "ovn-sbctl", "find", "port_binding", "type=\"\""],
+            capture_output=True, text=True
+        )
+
+        unbound_ports = []
+        bound_ports = 0
+        current_port = None
+
+        for line in result.stdout.split('\n'):
+            # Lines have format "key : value" with spaces
+            if 'logical_port' in line and ':' in line:
+                # Extract port name after the colon
+                parts = line.split(':', 1)
+                if len(parts) > 1:
+                    current_port = parts[1].strip().strip('"')
+            elif line.startswith('chassis') and ':' in line and current_port:
+                # Extract chassis value after the colon (ignore additional_chassis, gateway_chassis, etc.)
+                parts = line.split(':', 1)
+                if len(parts) > 1:
+                    chassis = parts[1].strip()
+                    if chassis == '[]' or not chassis:
+                        unbound_ports.append(current_port)
+                    else:
+                        bound_ports += 1
+                    current_port = None  # Reset after processing
+
+        if unbound_ports:
+            print(f"  ❌ {len(unbound_ports)} ports not bound to chassis: {', '.join(unbound_ports[:5])}")
+            issues.append(f"Unbound OVN ports: {', '.join(unbound_ports)}")
+        else:
+            print(f"  ✓ All {bound_ports} ports bound to chassis")
+
+        return issues
+
+    def _check_connectivity(self):
+        """Check basic connectivity"""
+        issues = []
+
+        # Test one internal ping
+        result = subprocess.run(
+            ["docker", "exec", "vpc-a-web", "ping", "-c", "1", "-W", "1", "10.0.1.1"],
+            capture_output=True
+        )
+        if result.returncode != 0:
+            print("  ❌ Container cannot reach its gateway (10.0.1.1)")
+            issues.append("Container to gateway connectivity failed")
+        else:
+            print("  ✓ Container can reach its gateway")
+
+        # Check ARP entries
+        result = subprocess.run(
+            ["docker", "exec", "vpc-a-web", "arp", "-n"],
+            capture_output=True, text=True
+        )
+        if "incomplete" in result.stdout:
+            print("  ⚠ Incomplete ARP entries detected")
+        else:
+            print("  ✓ ARP resolution working")
+
+        return issues
+
+    def _check_nat_gateway(self):
+        """Check NAT gateway configuration"""
+        issues = []
+
+        # Check if NAT gateway container is running
+        result = subprocess.run(
+            ["docker", "ps", "-q", "-f", "name=nat-gateway"],
+            capture_output=True, text=True
+        )
+        if not result.stdout.strip():
+            print("  ❌ NAT gateway container not running")
+            issues.append("NAT gateway container not running")
+            return issues
+        else:
+            print("  ✓ NAT gateway container running")
+
+        # Check NAT gateway interfaces
+        result = subprocess.run(
+            ["docker", "exec", "nat-gateway", "ip", "addr", "show", "eth1"],
+            capture_output=True, text=True
+        )
+        if "192.168.100.254" not in result.stdout:
+            print("  ❌ NAT gateway missing expected IP (192.168.100.254)")
+            issues.append("NAT gateway IP misconfigured")
+        else:
+            print("  ✓ NAT gateway has correct IP")
+
+        # Check iptables NAT rules
+        result = subprocess.run(
+            ["docker", "exec", "nat-gateway", "iptables", "-t", "nat", "-L", "POSTROUTING", "-n"],
+            capture_output=True, text=True
+        )
+        if "MASQUERADE" not in result.stdout:
+            print("  ❌ NAT gateway missing MASQUERADE rule")
+            issues.append("NAT gateway iptables rules missing")
+        else:
+            print("  ✓ NAT gateway has MASQUERADE rule")
+
+        # CRITICAL: Check NAT gateway port security is disabled
+        result = subprocess.run(
+            ["docker", "exec", "ovn-central", "ovn-nbctl", "lsp-get-port-security", "lsp-nat-gateway"],
+            capture_output=True, text=True
+        )
+        port_security = result.stdout.strip()
+        if result.returncode != 0:
+            print("  ⚠ Could not check NAT gateway port security")
+        elif port_security:
+            print(f"  ❌ NAT gateway port security is ENABLED: {port_security}")
+            print("     This will block forwarded traffic from VPCs!")
+            issues.append("NAT gateway port security must be disabled for traffic forwarding")
+        else:
+            print("  ✓ NAT gateway port security is disabled (required for forwarding)")
+
+        # Check if NAT gateway can reach external
+        result = subprocess.run(
+            ["docker", "exec", "nat-gateway", "ping", "-c", "1", "-W", "1", "8.8.8.8"],
+            capture_output=True
+        )
+        if result.returncode != 0:
+            print("  ❌ NAT gateway cannot reach external (8.8.8.8)")
+            issues.append("NAT gateway has no external connectivity")
+        else:
+            print("  ✓ NAT gateway can reach external")
+
+        return issues
+
+
 class TestRunner:
     """Runs connectivity and performance tests"""
+
+    def __init__(self, config_manager=None):
+        self.config_manager = config_manager
 
     def test_connectivity(self):
         """Test connectivity between VPCs"""
@@ -1027,15 +1823,21 @@ class TestRunner:
             logger.error("Test containers not found. Please run 'make test-start' first")
             return False
 
-        # Define container IPs (as assigned by connect-vpc-containers.sh)
-        container_ips = {
-            "vpc-a-web": "10.0.1.10",
-            "vpc-a-app": "10.0.2.10",
-            "vpc-a-db": "10.0.3.10",
-            "vpc-b-web": "10.1.1.10",
-            "vpc-b-app": "10.1.2.10",
-            "vpc-b-db": "10.1.3.10",
-        }
+        # Get container IPs from config or use defaults
+        container_ips = {}
+        if self.config_manager:
+            for container_name, container_config in self.config_manager.containers.items():
+                container_ips[container_name] = container_config.ip
+        else:
+            # Fallback to hardcoded for backwards compatibility
+            container_ips = {
+                "vpc-a-web": "10.0.1.10",
+                "vpc-a-app": "10.0.2.10",
+                "vpc-a-db": "10.0.3.10",
+                "vpc-b-web": "10.1.1.10",
+                "vpc-b-app": "10.1.2.10",
+                "vpc-b-db": "10.1.3.10",
+            }
 
         # Internal connectivity tests
         internal_tests = [
@@ -1298,7 +2100,7 @@ class MonitoringManager:
         else:
             raise ValueError(f"Unsupported architecture: {arch}")
 
-        self.exporter_url = f"https://github.com/Liquescent-Development/ovs_exporter/releases/download/v2.3.0/ovs-exporter-2.3.0.linux-{self.arch}.tar.gz"
+        self.exporter_url = f"https://github.com/Liquescent-Development/ovs_exporter/releases/download/v2.3.1/ovs-exporter-2.3.1.linux-{self.arch}.tar.gz"
         self.service_name = "ovs-exporter"  # Note: service name uses hyphen
 
     def setup_ovs_exporter(self) -> bool:
@@ -1313,20 +2115,23 @@ class MonitoringManager:
             # Download the exporter package
             logger.info(f"Downloading OVS exporter for {self.arch}...")
             subprocess.run([
-                "wget", "-q", "-O", f"/tmp/ovs-exporter-2.3.0.linux-{self.arch}.tar.gz",
+                "wget", "-q", "-O", f"/tmp/ovs-exporter-2.3.1.linux-{self.arch}.tar.gz",
                 self.exporter_url
             ], check=True)
 
             # Extract the package
             logger.info("Extracting OVS exporter package...")
             subprocess.run([
-                "tar", "xzf", f"/tmp/ovs-exporter-2.3.0.linux-{self.arch}.tar.gz", "-C", "/tmp"
+                "tar", "xzf", f"/tmp/ovs-exporter-2.3.1.linux-{self.arch}.tar.gz", "-C", "/tmp"
             ], check=True)
+
+            # Stop service first if running to avoid "text file busy"
+            subprocess.run(["systemctl", "stop", self.service_name], check=False)
 
             # Copy the binary to /usr/local/bin
             logger.info("Installing OVS exporter binary...")
             subprocess.run([
-                "cp", f"/tmp/ovs-exporter-2.3.0.linux-{self.arch}/ovs-exporter",
+                "cp", f"/tmp/ovs-exporter-2.3.1.linux-{self.arch}/ovs-exporter",
                 "/usr/local/bin/ovs-exporter"
             ], check=True)
 
@@ -1401,7 +2206,7 @@ WantedBy=multi-user.target
 
             # Clean up temporary files
             logger.info("Cleaning up temporary files...")
-            subprocess.run(["bash", "-c", f"rm -rf /tmp/ovs-exporter-2.3.0.linux-{self.arch}*"], check=False)
+            subprocess.run(["bash", "-c", f"rm -rf /tmp/ovs-exporter-2.3.1.linux-{self.arch}*"], check=False)
 
             # Verify the service is running
             time.sleep(2)
@@ -1477,6 +2282,7 @@ class ChaosEngineer:
             "duplication": self._packet_duplication,
             "underlay-chaos": self._underlay_chaos,
             "overlay-test": self._overlay_resilience_test,
+            "mixed": self._mixed_chaos,
         }
 
     def run_scenario(self, scenario: str, duration: int = 60, target: str = "vpc-.*"):
@@ -1610,12 +2416,61 @@ class ChaosEngineer:
 
         logger.info("Overlay resilience test completed")
 
+    def _mixed_chaos(self, target: str, duration: int):
+        """Run mixed chaos scenarios for traffic-chaos mode"""
+        logger.info("Running mixed chaos scenarios - heavy internal traffic stress test")
+
+        # Run multiple chaos scenarios with varied intensity
+        scenarios = [
+            ["netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+             "loss", "--percent", "20", f"re2:{target}"],
+            ["netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+             "delay", "--time", "100", "--jitter", "25", f"re2:{target}"],
+            ["netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+             "corrupt", "--percent", "5", f"re2:{target}"],
+            ["netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+             "duplicate", "--percent", "10", f"re2:{target}"],
+        ]
+
+        procs = []
+        for i, cmd in enumerate(scenarios):
+            # Stagger the start of each scenario slightly
+            if i > 0:
+                time.sleep(2)
+            proc = self._run_pumba(cmd, background=True)
+            procs.append(proc)
+
+        logger.info(f"Mixed chaos running for {duration} seconds with packet loss, delay, corruption, and duplication")
+        logger.info("Combined with heavy traffic generation, this simulates extreme network stress")
+
+        # Wait for all scenarios to complete
+        for proc in procs:
+            if proc:
+                proc.wait()
+
+        logger.info("Mixed chaos scenario completed")
+
 
 def main():
     """Main entry point"""
+    # Initialize config manager if available
+    config_manager = None
+    if CONFIG_MANAGER_AVAILABLE:
+        config_path = os.environ.get('NETWORK_CONFIG', 'network-config.yaml')
+        if Path(config_path).exists():
+            config_manager = NetworkConfigManager(config_path)
+            if config_manager.load_config():
+                logger.info(f"Loaded network config from {config_path}")
+            else:
+                logger.warning("Failed to load network config, using defaults")
+                config_manager = None
+
     parser = argparse.ArgumentParser(description="OVS Container Lab Orchestrator")
 
     subparsers = parser.add_subparsers(dest="command", help="Commands")
+
+    # Up command - comprehensive setup
+    up_parser = subparsers.add_parser("up", help="Complete setup of OVS Container Lab")
 
     # Setup command
     setup_parser = subparsers.add_parser("setup", help="Setup OVN topology")
@@ -1635,36 +2490,22 @@ def main():
     # Test command
     test_parser = subparsers.add_parser("test", help="Run connectivity tests")
 
-    # Test-driver command
-    test_driver_parser = subparsers.add_parser("test-driver", help="Test Docker network driver")
+    # Check command
+    check_parser = subparsers.add_parser("check", help="Run comprehensive network diagnostics")
+
 
     # Chaos command
     chaos_parser = subparsers.add_parser("chaos", help="Run chaos scenarios")
     chaos_parser.add_argument("scenario", choices=[
         "packet-loss", "latency", "bandwidth", "partition",
-        "corruption", "duplication", "underlay-chaos", "overlay-test"
+        "corruption", "duplication", "underlay-chaos", "overlay-test", "mixed"
     ])
     chaos_parser.add_argument("--duration", type=int, default=60, help="Duration in seconds")
     chaos_parser.add_argument("--target", default="vpc-.*", help="Target container regex pattern")
 
-    # Traffic-test command
-    traffic_test_parser = subparsers.add_parser("traffic-test", help="Test traffic generation prerequisites")
-
-    # Show command
-    show_parser = subparsers.add_parser("show", help="Show OVN topology")
-
-    # Network command
-    net_parser = subparsers.add_parser("network", help="Manage Docker networks")
-    net_subparsers = net_parser.add_subparsers(dest="action")
-
-    create_parser = net_subparsers.add_parser("create", help="Create network")
-    create_parser.add_argument("name", help="Network name")
-    create_parser.add_argument("--subnet", required=True, help="Subnet CIDR")
-    create_parser.add_argument("--gateway", required=True, help="Gateway IP")
-    create_parser.add_argument("--vpc", help="VPC label")
-
-    delete_parser = net_subparsers.add_parser("delete", help="Delete network")
-    delete_parser.add_argument("name", help="Network name")
+    # Reconcile command
+    reconcile_parser = subparsers.add_parser("reconcile", help="Reconcile network state for all containers")
+    reconcile_parser.add_argument("--container", help="Reconcile specific container only")
 
     args = parser.parse_args()
 
@@ -1674,20 +2515,20 @@ def main():
 
     # Execute commands
     if args.command == "setup":
-        ovn = OVNManager()
+        ovn = OVNManager(config_manager)
         ovn.setup_topology()
 
     elif args.command == "setup-chassis":
-        ovn = OVNManager()
+        ovn = OVNManager(config_manager)
         success = ovn.setup_ovs_chassis()
         return 0 if success else 1
 
     elif args.command == "bind-containers":
-        ovn = OVNManager()
+        ovn = OVNManager(config_manager)
         ovn.setup_container_networking()
 
     elif args.command == "bind-traffic-generators":
-        ovn = OVNManager()
+        ovn = OVNManager(config_manager)
         success = ovn.setup_traffic_generators_only()
         return 0 if success else 1
 
@@ -1697,34 +2538,147 @@ def main():
         return 0 if success else 1
 
     elif args.command == "test":
-        tester = TestRunner()
+        tester = TestRunner(config_manager)
         success = tester.test_connectivity()
         return 0 if success else 1
+    elif args.command == "check":
+        checker = NetworkChecker(config_manager)
+        success = checker.check_all()
+        return 0 if success else 1
 
-    elif args.command == "test-driver":
-        # DockerNetworkManager was removed - not using Docker network driver anymore
-        logger.error("Docker network driver test not available - using OVN directly")
-        return 1
 
     elif args.command == "chaos":
         chaos = ChaosEngineer()
         chaos.run_scenario(args.scenario, args.duration, args.target)
 
-    elif args.command == "traffic-test":
-        tester = TestRunner()
-        success = tester.test_traffic_prerequisites()
-        return 0 if success else 1
+    elif args.command == "up":
+        # Comprehensive setup with proper order and error handling
+        logger.info("🚀 Starting OVS Container Lab with proper orchestration...")
 
-    elif args.command == "show":
-        ovn = OVNManager()
-        ovn.show_topology()
+        # Step 1: Setup monitoring exporters (non-critical, can fail)
+        logger.info("Step 1/6: Setting up monitoring exporters...")
+        monitor = MonitoringManager()
+        if not monitor.setup_ovs_exporter() or not monitor.setup_node_exporter():
+            logger.error("❌ Monitoring setup failed. Cannot proceed.")
+            return 1
+        logger.info("✓ Monitoring exporters ready")
 
-    elif args.command == "network":
-        net_mgr = DockerNetworkManager()
-        if args.action == "create":
-            net_mgr.create_network(args.name, args.subnet, args.gateway, args.vpc)
-        elif args.action == "delete":
-            net_mgr.delete_network(args.name)
+        # Step 2: Wait for OVN central to be healthy
+        logger.info("Step 2/6: Waiting for OVN central to be ready...")
+        max_wait = 30
+        for i in range(max_wait):
+            result = subprocess.run(
+                ["docker", "exec", "ovn-central", "ovn-nbctl", "show"],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                logger.info("✓ OVN central is ready")
+                break
+            if i == max_wait - 1:
+                logger.error("❌ OVN central not ready after 30 seconds. Cannot proceed.")
+                return 1
+            time.sleep(1)
+
+        # Step 3: Setup OVS chassis
+        logger.info("Step 3/6: Configuring OVS as OVN chassis...")
+        ovn = OVNManager(config_manager)
+        if not ovn.setup_ovs_chassis():
+            logger.error("❌ Failed to setup OVS chassis. Cannot proceed.")
+            return 1
+        logger.info("✓ OVS chassis configured")
+
+        # Step 4: Wait for ALL containers to be running
+        logger.info("Step 4/6: Waiting for all containers to be running...")
+        required_containers = [
+            "vpc-a-web", "vpc-a-app", "vpc-a-db", "traffic-gen-a",
+            "vpc-b-web", "vpc-b-app", "vpc-b-db", "traffic-gen-b",
+            "nat-gateway"
+        ]
+
+        max_wait = 30
+        for i in range(max_wait):
+            result = subprocess.run(
+                ["docker", "ps", "--format", "{{.Names}}"],
+                capture_output=True, text=True
+            )
+            running = result.stdout.strip().split('\n')
+            missing = [c for c in required_containers if c not in running]
+
+            if not missing:
+                logger.info("✓ All containers are running")
+                break
+
+            if i == max_wait - 1:
+                logger.error(f"❌ Containers not running after 30 seconds: {missing}")
+                logger.error("Cannot proceed without all containers.")
+                return 1
+
+            if i % 5 == 0:
+                logger.info(f"  Waiting for containers: {missing}")
+            time.sleep(1)
+
+        # Step 5: NOW setup OVN topology (AFTER containers exist!)
+        logger.info("Step 5/6: Creating OVN logical topology...")
+        ovn.setup_topology()
+        logger.info("✓ OVN topology created")
+
+        # Step 6: Bind containers to OVN
+        logger.info("Step 6/6: Binding containers to OVN...")
+        ovn.setup_container_networking()
+
+        # Also bind traffic generators
+        logger.info("Binding traffic generators...")
+        ovn.setup_traffic_generators_only()
+
+        # Verify bindings are successful
+        time.sleep(2)  # Brief wait for bindings to settle
+        checker = NetworkChecker(config_manager)
+        issues = checker._check_bindings()
+        if issues:
+            logger.error("❌ Port binding verification failed:")
+            for issue in issues:
+                logger.error(f"  {issue}")
+            return 1
+
+        logger.info("✅ OVS Container Lab is ready!")
+        logger.info("")
+        logger.info("Access points:")
+        logger.info("  Grafana:    http://localhost:3000 (admin/admin)")
+        logger.info("  Prometheus: http://localhost:9090")
+        logger.info("")
+        logger.info("Next steps:")
+        logger.info("  make check        - Verify everything is configured correctly")
+        logger.info("  make traffic-run  - Generate normal traffic")
+        return 0
+
+    elif args.command == "reconcile":
+        ovn = OVNManager(config_manager)
+        reconciler = NetworkReconciler(ovn)
+
+        if args.container:
+            # Find the container's configuration
+            containers = [
+                ("vpc-a-web", "10.0.1.10", "ls-vpc-a-web"),
+                ("vpc-a-app", "10.0.2.10", "ls-vpc-a-app"),
+                ("vpc-a-db", "10.0.3.10", "ls-vpc-a-db"),
+                ("traffic-gen-a", "10.0.4.10", "ls-vpc-a-test"),
+                ("vpc-b-web", "10.1.1.10", "ls-vpc-b-web"),
+                ("vpc-b-app", "10.1.2.10", "ls-vpc-b-app"),
+                ("vpc-b-db", "10.1.3.10", "ls-vpc-b-db"),
+                ("traffic-gen-b", "10.1.4.10", "ls-vpc-b-test"),
+                ("nat-gateway", "192.168.100.254", "ls-transit"),
+            ]
+
+            for name, ip, switch in containers:
+                if name == args.container:
+                    success = reconciler.reconcile_container(name, ip, switch)
+                    return 0 if success else 1
+
+            logger.error(f"Unknown container: {args.container}")
+            return 1
+        else:
+            success = reconciler.reconcile_all()
+            return 0 if success else 1
 
     return 0
 
