@@ -15,6 +15,7 @@ import time
 from typing import Dict, List, Optional
 import os
 import random
+from datetime import datetime, timezone
 
 # Configure logging
 logging.basicConfig(
@@ -68,7 +69,7 @@ class OVNManager:
             }
         }
 
-    def run_nbctl(self, args: List[str]) -> str:
+    def run_nbctl(self, args: List[str], quiet_errors: bool = False) -> str:
         """Execute ovn-nbctl command inside ovn-central container"""
         # Use the default connection (unix socket) which is more reliable
         cmd = ["docker", "exec", "ovn-central", "ovn-nbctl"] + args
@@ -77,7 +78,8 @@ class OVNManager:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
-            logger.error(f"Command failed: {e.stderr}")
+            if not quiet_errors:
+                logger.error(f"Command failed: {e.stderr}")
             raise
 
     def run_sbctl(self, args: List[str]) -> str:
@@ -342,8 +344,7 @@ class OVNManager:
                 self.run_nbctl(["set", "logical_switch_port", port_name, f"external_ids:vpc-id={vpc_id}"])
 
             # Add creation timestamp
-            from datetime import datetime
-            timestamp = datetime.utcnow().isoformat() + "Z"
+            timestamp = datetime.now(timezone.utc).isoformat()
             self.run_nbctl(["set", "logical_switch_port", port_name, f"external_ids:created-at={timestamp}"])
             self.run_nbctl(["set", "logical_switch_port", port_name, f"external_ids:created-by=orchestrator"])
 
@@ -601,14 +602,15 @@ class OVNManager:
 
     def bind_container_to_ovn(self, container_name: str, switch_name: str, ip_address: str, mac_address: Optional[str] = None):
         """Bind a container to an OVN logical switch port"""
-        logger.info(f"Binding container {container_name} to OVN switch {switch_name}...")
+        logger.info(f"========================================")
+        logger.info(f"Binding container {container_name} to OVN switch {switch_name} with IP {ip_address}")
 
         # Check if port already exists and if container is already connected
         port_name = f"lsp-{container_name}"
 
         # Check if the logical switch port already exists
         try:
-            existing_addresses = self.run_nbctl(["lsp-get-addresses", port_name])
+            existing_addresses = self.run_nbctl(["lsp-get-addresses", port_name], quiet_errors=True)
             port_exists = True
             logger.info(f"Port {port_name} already exists with addresses: {existing_addresses}")
             # Extract MAC from existing port
@@ -625,7 +627,7 @@ class OVNManager:
 
         if port_exists and container_connected:
             logger.info(f"Container {container_name} is already fully connected to OVN, skipping")
-            return
+            return True
 
         # Create logical switch port if it doesn't exist
         if not port_exists:
@@ -652,12 +654,22 @@ class OVNManager:
                 logger.info(f"Created logical switch port {port_name} [tenant: {tenant_id}]")
             except subprocess.CalledProcessError as e:
                 logger.error(f"Failed to create port: {e}")
-                return
+                return False
 
         # Skip physical connection if container already has the interface
         if container_connected:
             logger.info(f"Container {container_name} already has eth1 interface, skipping physical connection")
-            return
+            # Double-check that the OVS side is also connected
+            if container_name.startswith("traffic-gen"):
+                expected_veth = f"veth-tg-{container_name[-1]}"
+            else:
+                expected_veth = f"veth-{container_name[:8]}"
+            check_ovs = subprocess.run(["sudo", "ovs-vsctl", "list-ports", "br-int"], capture_output=True, text=True)
+            if expected_veth not in check_ovs.stdout:
+                logger.warning(f"Container {container_name} has eth1 but veth {expected_veth} not in OVS! State inconsistent.")
+                # Don't return - try to fix it
+            else:
+                return True
 
         # Ensure we have a MAC address for the physical interface
         if not mac_address:
@@ -682,7 +694,13 @@ class OVNManager:
                 veth_host = f"veth-{container_name[:8]}"
             veth_cont = "eth1"
 
-            # Delete if exists
+            # Delete if exists (but only if not attached to OVS)
+            # Check if veth exists and is attached to OVS
+            check_ovs = subprocess.run(["sudo", "ovs-vsctl", "list-ports", "br-int"], capture_output=True, text=True)
+            if veth_host in check_ovs.stdout:
+                logger.warning(f"veth {veth_host} already attached to OVS, this shouldn't happen! Container state may be inconsistent.")
+                # Don't delete it - something is wrong
+                return False
             subprocess.run(["sudo", "ip", "link", "del", veth_host], capture_output=True)
 
             # Create veth pair
@@ -765,16 +783,19 @@ class OVNManager:
                 logger.error(f"Failed to verify eth1 in container {container_name} after setup")
                 return False
 
-            logger.info(f"Container {container_name} successfully bound to OVN port {port_name}")
+            logger.info(f"✅ Container {container_name} successfully bound to OVN port {port_name}")
+            logger.info(f"========================================")
             return True
 
         except subprocess.CalledProcessError as e:
-            logger.error(f"Command failed while binding {container_name}: {e}")
+            logger.error(f"❌ Command failed while binding {container_name}: {e}")
+            logger.info(f"========================================")
             # Try to clean up
             subprocess.run(["sudo", "ip", "link", "del", veth_host], capture_output=True)
             return False
         except Exception as e:
-            logger.error(f"Unexpected error binding {container_name}: {e}")
+            logger.error(f"❌ Unexpected error binding {container_name}: {e}")
+            logger.info(f"========================================")
             return False
 
     def setup_nat_gateway_networking(self):

@@ -210,11 +210,10 @@ traffic-test:
 
 traffic-start:
 	@echo "Starting traffic generators..."
-	@echo "Ensuring Docker is healthy..."
-	@limactl shell ovs-lab -- sudo systemctl restart docker 2>/dev/null || true
-	@sleep 3
-	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic build"
-	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose --profile traffic up -d"
+	@echo "Building ONLY traffic generator containers..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose build traffic-gen-a traffic-gen-b"
+	@echo "Starting ONLY traffic generator containers..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo docker compose up -d traffic-gen-a traffic-gen-b"
 	@echo "Connecting ONLY traffic generators to VPC test subnets (not rebinding other containers)..."
 	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py bind-traffic-generators"
 	@echo "Traffic generators ready (traffic-gen-a in VPC-A, traffic-gen-b in VPC-B)"
