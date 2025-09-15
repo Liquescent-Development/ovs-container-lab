@@ -31,11 +31,19 @@ help:
 	@echo "  make traffic-stop    - Stop all traffic generation"
 	@echo ""
 	@echo "CHAOS ENGINEERING:"
-	@echo "  make chaos      - Run network partition scenario"
-	@echo "  make chaos-loss - Simulate packet loss (20%)"
-	@echo "  make chaos-delay - Add network delay (100ms)"
-	@echo "  make chaos-kill - Kill random container"
-	@echo "  make chaos-pause - Pause random containers"
+	@echo "  Basic Scenarios:"
+	@echo "    make chaos-loss      - Simulate 30% packet loss"
+	@echo "    make chaos-delay     - Add 100ms network delay with jitter"
+	@echo "    make chaos-bandwidth - Limit bandwidth to 1mbit"
+	@echo "    make chaos-partition - Create network partition (pause)"
+	@echo "    make chaos-corruption - Introduce 5% packet corruption"
+	@echo "    make chaos-duplication - Introduce 10% packet duplication"
+	@echo "  Advanced Testing:"
+	@echo "    make chaos-underlay  - Test underlay failure (targets OVS/OVN)"
+	@echo "    make chaos-overlay-test - Test overlay resilience (combined failures)"
+	@echo "  Direct Actions:"
+	@echo "    make chaos-kill      - Kill random web container"
+	@echo "    make chaos-pause     - Pause random containers (30s)"
 	@echo ""
 	@echo "MONITORING:"
 	@echo "  make logs       - Follow container logs"
@@ -203,8 +211,8 @@ test-driver:
 	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py test-driver"
 
 chaos:
-	@echo "Running chaos scenario..."
-	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py chaos --scenario network-partition --duration 30"
+	@echo "🎲 Running default chaos scenario (packet loss)..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py chaos packet-loss --duration 30 --target 'vpc-.*'"
 
 test-full: test-start test
 
@@ -257,7 +265,6 @@ traffic-chaos:
 	@echo "WARNING: This will generate heavy traffic (rate limited to prevent system hang)!"
 	@limactl shell ovs-lab -- bash -c "sudo docker exec -d traffic-gen-a bash -c 'cd /workspace && python3 traffic-gen.py chaos'"
 	@limactl shell ovs-lab -- bash -c "sudo docker exec -d traffic-gen-b bash -c 'cd /workspace && python3 traffic-gen.py chaos'"
-	@limactl shell ovs-lab -- bash -c "sudo docker exec -d traffic-gen-b python3 /workspace/traffic-gen.py --mode chaos --targets 10.1.1.10,10.1.2.10,10.1.3.10"
 	@echo "Controlled chaos traffic started to VPC-A and VPC-B. Monitor in Grafana."
 
 traffic-stop:
@@ -275,25 +282,52 @@ traffic-stop-container:
 
 # ==================== CHAOS ENGINEERING ====================
 
+# Basic chaos scenarios using orchestrator
 chaos-loss:
-	@echo "Simulating 20% packet loss on all containers..."
-	@limactl shell ovs-lab -- sudo docker run --rm -v /var/run/docker.sock:/var/run/docker.sock gaiaadm/pumba \
-		netem --duration 60s --tc-image gaiadocker/iproute2 loss --percent 20 re2:"^vpc-"
+	@echo "🔥 Simulating 30% packet loss on VPC containers..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py chaos packet-loss --duration 60 --target 'vpc-.*'"
 
 chaos-delay:
-	@echo "Adding 100ms delay to all containers..."
-	@limactl shell ovs-lab -- sudo docker run --rm -v /var/run/docker.sock:/var/run/docker.sock gaiaadm/pumba \
-		netem --duration 60s --tc-image gaiadocker/iproute2 delay --time 100 re2:"^vpc-"
+	@echo "⏰ Adding 100ms delay with jitter to VPC containers..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py chaos latency --duration 60 --target 'vpc-.*'"
 
+chaos-bandwidth:
+	@echo "🚦 Limiting bandwidth to 1mbit on VPC containers..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py chaos bandwidth --duration 60 --target 'vpc-.*'"
+
+chaos-partition:
+	@echo "🔌 Creating network partition by pausing containers..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py chaos partition --duration 30 --target 'vpc-.*-web'"
+
+chaos-corruption:
+	@echo "💥 Introducing packet corruption..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py chaos corruption --duration 60 --target 'vpc-.*'"
+
+chaos-duplication:
+	@echo "👥 Introducing packet duplication..."
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py chaos duplication --duration 60 --target 'vpc-.*'"
+
+# Advanced underlay/overlay testing
+chaos-underlay:
+	@echo "🎯 Testing UNDERLAY network failure - targeting OVS/OVN infrastructure..."
+	@echo "This will introduce failures in the underlay to test overlay resilience"
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py chaos underlay-chaos --duration 60"
+
+chaos-overlay-test:
+	@echo "🌐 Testing OVERLAY network resilience with combined failures..."
+	@echo "Running multiple simultaneous chaos scenarios to stress test the overlay"
+	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py chaos overlay-test --duration 90"
+
+# Direct Pumba commands for quick testing
 chaos-kill:
-	@echo "Randomly killing a container..."
+	@echo "☠️ Randomly killing a web container..."
 	@limactl shell ovs-lab -- sudo docker run --rm -v /var/run/docker.sock:/var/run/docker.sock gaiaadm/pumba \
-		kill --signal SIGKILL re2:"^vpc-.*-web"
+		kill --signal SIGKILL re2:"^vpc-.*-web" --limit 1
 
 chaos-pause:
-	@echo "Pausing random containers for 30s..."
+	@echo "⏸️ Pausing random containers for 30s..."
 	@limactl shell ovs-lab -- sudo docker run --rm -v /var/run/docker.sock:/var/run/docker.sock gaiaadm/pumba \
-		pause --duration 30s re2:"^vpc-"
+		pause --duration 30s re2:"^vpc-.*" --limit 2
 
 # ==================== MONITORING ====================
 

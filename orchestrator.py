@@ -1465,7 +1465,7 @@ WantedBy=multi-user.target
 
 
 class ChaosEngineer:
-    """Implements chaos testing scenarios"""
+    """Implements chaos testing scenarios using Pumba"""
 
     def __init__(self):
         self.scenarios = {
@@ -1473,61 +1473,142 @@ class ChaosEngineer:
             "latency": self._add_latency,
             "bandwidth": self._limit_bandwidth,
             "partition": self._network_partition,
+            "corruption": self._packet_corruption,
+            "duplication": self._packet_duplication,
+            "underlay-chaos": self._underlay_chaos,
+            "overlay-test": self._overlay_resilience_test,
         }
 
-    def run_scenario(self, scenario: str, duration: int = 60, target: str = "ovs-vpc-a"):
-        """Run a chaos scenario"""
+    def run_scenario(self, scenario: str, duration: int = 60, target: str = "vpc-.*"):
+        """Run a chaos scenario using Pumba"""
         if scenario not in self.scenarios:
             logger.error(f"Unknown scenario: {scenario}")
             return False
 
-        logger.info(f"Running chaos scenario: {scenario} for {duration}s on {target}")
+        logger.info(f"Running chaos scenario: {scenario} for {duration}s on pattern: {target}")
         self.scenarios[scenario](target, duration)
         return True
 
+    def _run_pumba(self, cmd: list, background: bool = False):
+        """Execute Pumba command"""
+        full_cmd = ["docker", "run", "--rm", "-v", "/var/run/docker.sock:/var/run/docker.sock", "gaiaadm/pumba"] + cmd
+
+        if background:
+            proc = subprocess.Popen(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            return proc
+        else:
+            result = subprocess.run(full_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"Pumba command failed: {result.stderr}")
+            return result
+
     def _packet_loss(self, target: str, duration: int):
-        """Introduce packet loss"""
-        logger.info(f"Introducing 30% packet loss on {target}")
+        """Introduce packet loss using Pumba"""
+        logger.info(f"Introducing 30% packet loss on containers matching: {target}")
         cmd = [
-            "docker", "exec", target,
-            "tc", "qdisc", "add", "dev", "eth0", "root", "netem", "loss", "30%"
+            "netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+            "loss", "--percent", "30", f"re2:{target}"
         ]
-        subprocess.run(cmd, check=True)
-
-        time.sleep(duration)
-
-        # Remove packet loss
-        cmd[5] = "del"
-        subprocess.run(cmd[2:6] + cmd[7:8], check=True)
-        logger.info("Packet loss removed")
+        self._run_pumba(cmd)
+        logger.info("Packet loss scenario completed")
 
     def _add_latency(self, target: str, duration: int):
-        """Add network latency"""
-        logger.info(f"Adding 100ms latency on {target}")
+        """Add network latency using Pumba"""
+        logger.info(f"Adding 100ms latency with 20ms jitter on containers matching: {target}")
         cmd = [
-            "docker", "exec", target,
-            "tc", "qdisc", "add", "dev", "eth0", "root", "netem", "delay", "100ms"
+            "netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+            "delay", "--time", "100", "--jitter", "20", f"re2:{target}"
         ]
-        subprocess.run(cmd, check=True)
-
-        time.sleep(duration)
-
-        # Remove latency
-        cmd[5] = "del"
-        subprocess.run(cmd[2:6] + cmd[7:8], check=True)
-        logger.info("Latency removed")
+        self._run_pumba(cmd)
+        logger.info("Latency scenario completed")
 
     def _limit_bandwidth(self, target: str, duration: int):
-        """Limit network bandwidth"""
-        logger.info(f"Limiting bandwidth to 1mbit on {target}")
-        # Implementation would use tc tbf qdisc
-        pass
+        """Limit network bandwidth using Pumba"""
+        logger.info(f"Limiting bandwidth to 1mbit on containers matching: {target}")
+        cmd = [
+            "netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+            "rate", "--rate", "1mbit", f"re2:{target}"
+        ]
+        self._run_pumba(cmd)
+        logger.info("Bandwidth limit scenario completed")
 
     def _network_partition(self, target: str, duration: int):
-        """Create network partition"""
-        logger.info(f"Creating network partition on {target}")
-        # Implementation would use iptables rules
-        pass
+        """Create network partition by pausing containers"""
+        logger.info(f"Creating network partition by pausing containers matching: {target}")
+        cmd = [
+            "pause", "--duration", f"{duration}s", f"re2:{target}"
+        ]
+        self._run_pumba(cmd)
+        logger.info("Network partition scenario completed")
+
+    def _packet_corruption(self, target: str, duration: int):
+        """Introduce packet corruption using Pumba"""
+        logger.info(f"Introducing 5% packet corruption on containers matching: {target}")
+        cmd = [
+            "netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+            "corrupt", "--percent", "5", f"re2:{target}"
+        ]
+        self._run_pumba(cmd)
+        logger.info("Packet corruption scenario completed")
+
+    def _packet_duplication(self, target: str, duration: int):
+        """Introduce packet duplication using Pumba"""
+        logger.info(f"Introducing 10% packet duplication on containers matching: {target}")
+        cmd = [
+            "netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+            "duplicate", "--percent", "10", f"re2:{target}"
+        ]
+        self._run_pumba(cmd)
+        logger.info("Packet duplication scenario completed")
+
+    def _underlay_chaos(self, target: str, duration: int):
+        """Test underlay network failure by targeting host OVS containers"""
+        logger.info("Testing underlay network chaos - targeting OVS/OVN infrastructure")
+
+        # Target the underlay infrastructure (OVS instances)
+        underlay_targets = ["ovs-vpc-a", "ovs-vpc-b", "ovn-central"]
+
+        for infra_target in underlay_targets:
+            logger.info(f"Applying packet loss to underlay component: {infra_target}")
+            cmd = [
+                "netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+                "loss", "--percent", "20", infra_target
+            ]
+            # Run in background to affect multiple targets simultaneously
+            self._run_pumba(cmd, background=True)
+
+        # Wait for duration
+        time.sleep(duration)
+        logger.info("Underlay chaos scenario completed - overlay should have shown resilience")
+
+    def _overlay_resilience_test(self, target: str, duration: int):
+        """Test overlay network resilience by introducing various failures"""
+        logger.info("Testing overlay network resilience with combined failures")
+
+        # Run multiple chaos scenarios simultaneously
+        scenarios = [
+            ["netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+             "loss", "--percent", "15", "re2:vpc-a-.*"],
+            ["netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+             "delay", "--time", "50", "--jitter", "10", "re2:vpc-b-.*"],
+            ["netem", "--duration", f"{duration}s", "--tc-image", "gaiadocker/iproute2",
+             "corrupt", "--percent", "2", "re2:traffic-gen-.*"],
+        ]
+
+        procs = []
+        for cmd in scenarios:
+            proc = self._run_pumba(cmd, background=True)
+            procs.append(proc)
+
+        # Monitor during chaos
+        logger.info(f"Running overlay resilience test for {duration} seconds...")
+        logger.info("Monitor Grafana dashboards to observe overlay behavior during underlay chaos")
+
+        # Wait for all scenarios to complete
+        for proc in procs:
+            proc.wait()
+
+        logger.info("Overlay resilience test completed")
 
 
 def main():
@@ -1559,9 +1640,12 @@ def main():
 
     # Chaos command
     chaos_parser = subparsers.add_parser("chaos", help="Run chaos scenarios")
-    chaos_parser.add_argument("scenario", choices=["packet-loss", "latency", "bandwidth", "partition"])
+    chaos_parser.add_argument("scenario", choices=[
+        "packet-loss", "latency", "bandwidth", "partition",
+        "corruption", "duplication", "underlay-chaos", "overlay-test"
+    ])
     chaos_parser.add_argument("--duration", type=int, default=60, help="Duration in seconds")
-    chaos_parser.add_argument("--target", default="ovs-vpc-a", help="Target container")
+    chaos_parser.add_argument("--target", default="vpc-.*", help="Target container regex pattern")
 
     # Traffic-test command
     traffic_test_parser = subparsers.add_parser("traffic-test", help="Test traffic generation prerequisites")
