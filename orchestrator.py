@@ -1298,7 +1298,7 @@ class MonitoringManager:
         else:
             raise ValueError(f"Unsupported architecture: {arch}")
 
-        self.exporter_url = f"https://github.com/Liquescent-Development/ovs_exporter/releases/download/v2.2.0/ovs-exporter-2.2.0.linux-{self.arch}.tar.gz"
+        self.exporter_url = f"https://github.com/Liquescent-Development/ovs_exporter/releases/download/v2.3.0/ovs-exporter-2.3.0.linux-{self.arch}.tar.gz"
         self.service_name = "ovs-exporter"  # Note: service name uses hyphen
 
     def setup_ovs_exporter(self) -> bool:
@@ -1313,20 +1313,20 @@ class MonitoringManager:
             # Download the exporter package
             logger.info(f"Downloading OVS exporter for {self.arch}...")
             subprocess.run([
-                "wget", "-q", "-O", f"/tmp/ovs-exporter-2.2.0.linux-{self.arch}.tar.gz",
+                "wget", "-q", "-O", f"/tmp/ovs-exporter-2.3.0.linux-{self.arch}.tar.gz",
                 self.exporter_url
             ], check=True)
 
             # Extract the package
             logger.info("Extracting OVS exporter package...")
             subprocess.run([
-                "tar", "xzf", f"/tmp/ovs-exporter-2.2.0.linux-{self.arch}.tar.gz", "-C", "/tmp"
+                "tar", "xzf", f"/tmp/ovs-exporter-2.3.0.linux-{self.arch}.tar.gz", "-C", "/tmp"
             ], check=True)
 
             # Copy the binary to /usr/local/bin
             logger.info("Installing OVS exporter binary...")
             subprocess.run([
-                "cp", f"/tmp/ovs-exporter-2.2.0.linux-{self.arch}/ovs-exporter",
+                "cp", f"/tmp/ovs-exporter-2.3.0.linux-{self.arch}/ovs-exporter",
                 "/usr/local/bin/ovs-exporter"
             ], check=True)
 
@@ -1401,7 +1401,7 @@ WantedBy=multi-user.target
 
             # Clean up temporary files
             logger.info("Cleaning up temporary files...")
-            subprocess.run(["bash", "-c", f"rm -rf /tmp/ovs-exporter-2.2.0.linux-{self.arch}*"], check=False)
+            subprocess.run(["bash", "-c", f"rm -rf /tmp/ovs-exporter-2.3.0.linux-{self.arch}*"], check=False)
 
             # Verify the service is running
             time.sleep(2)

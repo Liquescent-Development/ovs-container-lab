@@ -539,7 +539,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(ovs_dp_lookups_missed[5m])",
+          "expr": "rate(ovs_dp_lookups_missed_total[5m])",
           "legendFormat": "New Flow Setups/sec",
           "refId": "B"
         },
@@ -548,7 +548,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(ovs_dp_lookups_hit[5m])",
+          "expr": "rate(ovs_dp_lookups_hit_total[5m])",
           "legendFormat": "Flow Cache Hits/sec",
           "refId": "C"
         }
@@ -823,7 +823,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "100 * rate(ovs_dp_lookups_missed[5m]) / (rate(ovs_dp_lookups_hit[5m]) + rate(ovs_dp_lookups_missed[5m]))",
+          "expr": "100 * rate(ovs_dp_lookups_missed_total[5m]) / (rate(ovs_dp_lookups_hit_total[5m]) + rate(ovs_dp_lookups_missed_total[5m])),"
           "legendFormat": "Flow Miss Rate",
           "refId": "A"
         }

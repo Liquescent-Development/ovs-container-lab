@@ -13,6 +13,7 @@ services:
       - "6641:6641"  # OVN Northbound DB
       - "6642:6642"  # OVN Southbound DB
       - "9876:5000"  # Docker network driver API (map container 5000 to host 9876)
+      - "9476:9476"  # OVN Exporter metrics
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # Docker API access
       - ovn-nb-db:/var/lib/ovn

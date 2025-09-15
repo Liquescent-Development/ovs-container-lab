@@ -21,3 +21,10 @@ scrape_configs:
         labels:
           instance: 'lima-host'
           component: 'ovs'
+
+  - job_name: 'ovn_exporter'
+    static_configs:
+      - targets: ['172.17.0.1:9476']
+        labels:
+          instance: 'ovn-central'
+          component: 'ovn'

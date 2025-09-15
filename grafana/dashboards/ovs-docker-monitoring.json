@@ -170,15 +170,15 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_packets_total[5m])",
-          "legendFormat": "{{uuid}} RX",
+          "expr": "rate(ovs_interface_rx_packets_total[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "legendFormat": "{{value}} {{uuid}} RX",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_packets_total[5m])",
-          "legendFormat": "{{uuid}} TX",
+          "expr": "rate(ovs_interface_tx_packets_total[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "legendFormat": "{{value}} {{uuid}} TX",
           "range": true,
           "refId": "B"
         }
@@ -273,15 +273,15 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_bytes[5m]) ",
-          "legendFormat": "{{uuid}} RX",
+          "expr": "rate(ovs_interface_rx_bytes[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "legendFormat": "{{value}} {{uuid}} RX",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_bytes[5m])",
-          "legendFormat": "{{uuid}} TX",
+          "expr": "rate(ovs_interface_tx_bytes[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "legendFormat": "{{value}} {{uuid}} TX",
           "range": true,
           "refId": "B"
         }
@@ -438,29 +438,29 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_packets_total[30s])",
-          "legendFormat": "{{uuid}} RX Rate",
+          "expr": "rate(ovs_interface_rx_packets_total[30s]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "legendFormat": "{{value}} {{uuid}} RX Rate",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_packets_total[30s])",
-          "legendFormat": "{{uuid}} TX Rate",
+          "expr": "rate(ovs_interface_tx_packets_total[30s]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "legendFormat": "{{value}} {{uuid}} TX Rate",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_errors_total[1m]) + rate(ovs_interface_rx_dropped_total[1m])",
-          "legendFormat": "{{uuid}} RX Issues",
+          "expr": "(rate(ovs_interface_rx_errors_total[1m]) + rate(ovs_interface_rx_dropped_total[1m])) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "legendFormat": "{{value}} {{uuid}} RX Issues",
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_errors_total[1m]) + rate(ovs_interface_tx_dropped_total[1m])",
-          "legendFormat": "{{uuid}} TX Issues",
+          "expr": "(rate(ovs_interface_tx_errors_total[1m]) + rate(ovs_interface_tx_dropped_total[1m])) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "legendFormat": "{{value}} {{uuid}} TX Issues",
           "range": true,
           "refId": "D"
         }
@@ -684,8 +684,8 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "(rate(ovs_interface_rx_packets_total[1m]) > 0) or (rate(ovs_interface_tx_packets_total[1m]) > 0)",
-          "legendFormat": "{{uuid}} Activity",
+          "expr": "((rate(ovs_interface_rx_packets_total[1m]) > 0) or (rate(ovs_interface_tx_packets_total[1m]) > 0)) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "legendFormat": "{{value}} {{uuid}} Activity",
           "range": true,
           "refId": "A"
         }
@@ -912,17 +912,17 @@
           "refId": "A"
         },
         {
-          "expr": "rate(ovs_dp_lookups_hit[5m])",
+          "expr": "rate(ovs_dp_lookups_hit_total[5m])",
           "legendFormat": "Flow Hits/sec",
           "refId": "B"
         },
         {
-          "expr": "rate(ovs_dp_lookups_missed[5m])",
+          "expr": "rate(ovs_dp_lookups_missed_total[5m])",
           "legendFormat": "Flow Misses/sec",
           "refId": "C"
         },
         {
-          "expr": "rate(ovs_dp_lookups_lost[5m])",
+          "expr": "rate(ovs_dp_lookups_lost_total[5m])",
           "legendFormat": "Flow Lost/sec",
           "refId": "D"
         }

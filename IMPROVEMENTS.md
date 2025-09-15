@@ -14,6 +14,168 @@
       * Where it makes sense they should be associated with both their VPC and the tenant id that owns them
 * Add support for adding a second VM that represents another compute node essentially that is a part of VPC A and VPC B
 
+
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-vsctl -- del-port br-int veth-tg-a -- add-port br-int veth-tg-a -- set Interface veth-tg-a
+      external_ids:iface-id=lsp-traffic-g…)
+  ⎿  bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+
+⏺ Now test TCP again:
+
+⏺ Bash(limactl shell ovs-lab -- sudo docker exec traffic-gen-a curl -v --connect-timeout 2 http://10.0.1.10 2>&1 | head -10)
+  ⎿  bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+     *   Trying 10.0.1.10:80...
+     … +8 lines (ctrl+o to expand)
+
+⏺ Still failing. The fundamental issue is that TCP packets are entering OVS but with the wrong metadata/flow mapping. Let me check what the metadata values
+  mean:
+
+⏺ Bash(limactl shell ovs-lab -- sudo docker exec ovn-central ovn-sbctl list Datapath_Binding | grep -E "tunnel_key|external_ids" | head -10)
+  ⎿  external_ids        : {logical-switch="dab43cfa-14c0-4838-bd44-9786c21ba4f7", name=ls-vpc-a-db}
+     tunnel_key          : 6
+     external_ids        : {logical-switch="9d040d9d-dac2-4ad3-8014-434275ecbca6", name=ls-vpc-a-app}
+     … +9 lines (ctrl+o to expand)
+
+⏺ The port 9 flow has metadata 0x7 which would be tunnel_key 7. Let me find what that is:
+
+⏺ Bash(limactl shell ovs-lab -- sudo docker exec ovn-central ovn-sbctl list Datapath_Binding | grep -B1 "tunnel_key.*: 7")
+  ⎿  load_balancers      : []
+     tunnel_key          : 7
+     bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+
+⏺ Let me get more context:
+
+⏺ Bash(limactl shell ovs-lab -- sudo docker exec ovn-central ovn-sbctl find Datapath_Binding tunnel_key=7 | grep -E "external_ids|tunnel_key")
+  ⎿  external_ids        : {logical-switch="0ff35410-2f67-47f5-9f2b-d5814be48151", name=ls-vpc-a-test}
+     tunnel_key          : 7
+     bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+
+⏺ Good! Metadata 0x7 is ls-vpc-a-test which is correct for traffic-gen-a. So the packets ARE entering the correct logical switch. The issue must be in the
+  subsequent flow tables.
+
+  Let me trace what happens after table 8:
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-ofctl dump-flows br-int table=8 | grep "metadata=0x7" | head -5)
+  ⎿  cookie=0x832e7e9c, duration=318.993s, table=8, n_packets=0, n_bytes=0, idle_age=318, priority=120,icmp6,reg10=0x10000/0x10000,metadata=0x7,dl_dst=00:0
+    0:00:01:04:01,icmp_type=2,icmp_code=0 actions=push:NXM_NX_REG14[],push:NXM_NX_REG15[],pop:NXM_NX_REG14[],pop:NXM_NX_REG15[],resubmit(,35)
+     cookie=0x832e7e9c, duration=318.993s, table=8, n_packets=0, n_bytes=0, idle_age=318, priority=120,icmp,reg10=0x10000/0x10000,metadata=0x7,dl_dst=00:00
+    … +8 lines (ctrl+o to expand)
+
+
+
+⏺ These are ICMP flows. Let me check for generic flows:
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-ofctl dump-flows br-int table=8 | grep -v "icmp" | grep "metadata=0x7" | head -5)
+  ⎿  cookie=0x9ddcf9ad, duration=326.498s, table=8, n_packets=0, n_bytes=0, idle_age=326, priority=100,metadata=0x7,vlan_tci=0x1000/0x1000 actions=drop
+     cookie=0x36c80c7f, duration=326.498s, table=8, n_packets=0, n_bytes=0, idle_age=326, priority=100,metadata=0x7,dl_src=01:00:00:00:00:00/01:00:00:00:00
+    :00 actions=drop
+    … +4 lines (ctrl+o to expand)
+
+
+⏺ Good! The priority=50 flow has 8 packets (our TCP packets). They're going to table 73 then table 9. Let me check what's in table 9:
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-ofctl dump-flows br-int table=9 | grep "n_packets=[1-9]" | grep "metadata=0x7" | head -3)
+  ⎿   cookie=0x17193873, duration=334.412s, table=9, n_packets=8, n_bytes=456, idle_age=42, priority=0,metadata=0x7 actions=resubmit(,10)
+     bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+
+⏺ Table 9 sends to table 10. Let me continue tracing:
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-ofctl dump-flows br-int table=10 | grep "metadata=0x7" | grep -E "tcp|ip" | head -5)
+  ⎿  bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+
+⏺ No matches. Let me check all table 10 flows with packets:
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-ofctl dump-flows br-int table=10 | grep "n_packets=[1-9]" | grep "metadata=0x7" | head -3)
+  ⎿   cookie=0xf9d4e7fc, duration=347.300s, table=10, n_packets=8, n_bytes=456, idle_age=55, priority=0,metadata=0x7 actions=resubmit(,11)
+     bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+
+⏺ To table 11. This is getting tedious. Let me check where the packets are being dropped by looking for the last table with packet hits:
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-ofctl dump-flows br-int | grep "metadata=0x7" | grep "n_packets=[1-9]" | tail -5)
+  ⎿  cookie=0x15799b76, duration=354.297s, table=51, n_packets=8, n_bytes=456, idle_age=62, priority=0,metadata=0x7 actions=load:0->NXM_NX_REG10[12],resubm
+    it(,75),move:NXM_NX_REG10[12]->NXM_NX_XXREG0[111],resubmit(,52)
+     cookie=0x52bbc902, duration=354.297s, table=52, n_packets=8, n_bytes=456, idle_age=62, priority=0,metadata=0x7 actions=resubmit(,64)
+    … +9 lines (ctrl+o to expand)
+
+
+⏺ Interesting! Table 65 shows:
+  - 3 packets with reg15=0x2 go to output:9 (back to port 9, which is veth-tg-a - these are probably ICMP)
+  - 5 packets with reg15=0x1 go to a complex clone action that resubmits to table 8 with metadata=0x2
+
+  Metadata 0x2 is lr-vpc-a (the VPC-A router). So the packets ARE being forwarded to the logical router! But then they're not making it through.
+
+  Let me check what happens in the router (metadata=0x2):
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-ofctl dump-flows br-int | grep "metadata=0x2" | grep "n_packets=[1-9]" | grep -E "tcp|ip" | head -5)
+  ⎿  cookie=0xf08324bb, duration=366.660s, table=21, n_packets=5, n_bytes=330, idle_age=79, priority=74,ip,metadata=0x2,nw_dst=10.0.1.0/24 actions=dec_ttl(
+    ),load:0->OXM_OF_PKT_REG4[32..47],move:NXM_OF_IP_DST[]->NXM_NX_XXREG0[96..127],load:0xa000101->NXM_NX_XXREG0[64..95],mod_dl_src:00:00:00:01:01:01,load:
+    0x1->NXM_NX_REG15[],load:0x1->NXM_NX_REG10[0],resubmit(,22)
+    … +2 lines (ctrl+o to expand)
+
+
+
+⏺ Good! The router IS routing the packets to 10.0.1.0/24 (5 packets)! It's decrementing TTL, setting the source MAC to 00:00:00:01:01:01 (router MAC), and
+  going to table 22. The packets are being routed correctly!
+
+  Let me continue following the flow through the egress pipeline. The packets should now enter ls-vpc-a-web (metadata should change to the web switch). Let
+  me check if they reach the web switch:
+
+⏺ Bash(limactl shell ovs-lab -- sudo docker exec ovn-central ovn-sbctl find Datapath_Binding name=ls-vpc-a-web | grep tunnel_key)
+  ⎿  bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+     ovn-sbctl: Datapath_Binding does not contain a column whose name matches "name"
+
+⏺ Bash(limactl shell ovs-lab -- sudo docker exec ovn-central ovn-sbctl list Datapath_Binding | grep -A1 "ls-vpc-a-web" | grep tunnel_key)
+  ⎿  bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+
+⏺ Let me trace where the packets go after routing. From table 21, they went to table 22:
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-ofctl dump-flows br-int table=22 | grep "metadata=0x2" | grep "n_packets=[1-9]" | head -3)
+  ⎿   cookie=0xb1695ba5, duration=391.238s, table=22, n_packets=5, n_bytes=330, idle_age=104, priority=150,reg8=0/0xffff,metadata=0x2 actions=resubmit(,23)
+     bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+
+⏺ Table 23. Let me skip ahead and see where they end up:
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-ofctl dump-flows br-int | grep "metadata=0x2" | grep "n_packets=5" | tail -3)
+  ⎿  cookie=0x42cffaf7, duration=397.283s, table=48, n_packets=5, n_bytes=330, idle_age=110, priority=100,reg15=0x1,metadata=0x2 actions=resubmit(,64)
+     cookie=0x77af33d4, duration=397.282s, table=64, n_packets=5, n_bytes=330, idle_age=110, priority=100,reg10=0x1/0x1,reg15=0x1,metadata=0x2 actions=push
+    :NXM_OF_IN_PORT[],load:0xffff->NXM_OF_IN_PORT[],resubmit(,65),pop:NXM_OF_IN_PORT[]
+    … +7 lines (ctrl+o to expand)
+
+
+⏺ Table 65 again! This time it's changing metadata from 0x2 (router) to 0x4. Let me check what metadata 0x4 is:
+
+⏺ Bash(limactl shell ovs-lab -- sudo docker exec ovn-central ovn-sbctl find Datapath_Binding tunnel_key=4 | grep external_ids)
+  ⎿  external_ids        : {logical-switch="dd4dabaa-300d-4887-b59f-48dcaa5d9f01", name=ls-vpc-a-web}
+     bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+
+⏺ Perfect! Metadata 0x4 is ls-vpc-a-web. So the packets ARE entering the web switch! Now let me check if they're reaching the output stage:
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-ofctl dump-flows br-int | grep "metadata=0x4" | grep "n_packets=[1-9]" | tail -5)
+  ⎿  cookie=0xba59a384, duration=413.415s, table=49, n_packets=5, n_bytes=330, idle_age=126, priority=0,metadata=0x4 actions=resubmit(,50)
+     cookie=0x5004adc9, duration=413.419s, table=50, n_packets=5, n_bytes=330, idle_age=126, priority=0,metadata=0x4 actions=resubmit(,51)
+     cookie=0x15799b76, duration=413.415s, table=51, n_packets=5, n_bytes=330, idle_age=126, priority=0,metadata=0x4 actions=load:0->NXM_NX_REG10[12],resub
+    … +5 lines (ctrl+o to expand)
+
+
+⏺ FINALLY! Table 65 shows output:3 - the packets are being sent to port 3! Let me check what port 3 is:
+
+⏺ Bash(limactl shell ovs-lab -- sudo ovs-ofctl show br-int | grep "^\s*3(")
+  ⎿   3(veth-vpc-a-we): addr:b2:e2:33:4f:4d:2c
+     bash: line 1: cd: /Users/kiener/code/ovs-container-lab: No such file or directory
+     bash: line 1: cd: /Users/kiener: No such file or directory
+
+
 Excellent find! The OVN BGP Agent from OpenStack is exactly what would make this architecture production-ready. Looking at that project:
 
   OVN BGP Agent - Perfect Solution

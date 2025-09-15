@@ -75,7 +75,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(ovs_dp_lookups_hit[5m])) / (sum(rate(ovs_dp_lookups_hit[5m])) + sum(rate(ovs_dp_lookups_missed[5m])))",
+          "expr": "sum(rate(ovs_dp_lookups_hit_total[5m])) / (sum(rate(ovs_dp_lookups_hit_total[5m])) + sum(rate(ovs_dp_lookups_missed_total[5m])))",
           "refId": "A",
           "legendFormat": "Flow Cache Hit Rate"
         }
@@ -159,17 +159,17 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "rate(ovs_dp_lookups_hit[5m])",
+          "expr": "rate(ovs_dp_lookups_hit_total[5m])",
           "refId": "A",
           "legendFormat": "Cache Hits - {{datapath}}"
         },
         {
-          "expr": "rate(ovs_dp_lookups_missed[5m])",
+          "expr": "rate(ovs_dp_lookups_missed_total[5m])",
           "refId": "B",
           "legendFormat": "Cache Misses - {{datapath}}"
         },
         {
-          "expr": "rate(ovs_dp_lookups_lost[5m])",
+          "expr": "rate(ovs_dp_lookups_lost_total[5m])",
           "refId": "C",
           "legendFormat": "Lookups Lost - {{datapath}}"
         }
@@ -514,12 +514,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "rate(ovs_dp_lookups_hit[5m]) + rate(ovs_dp_lookups_missed[5m])",
+          "expr": "rate(ovs_dp_lookups_hit_total[5m]) + rate(ovs_dp_lookups_missed_total[5m])",
           "refId": "A",
           "legendFormat": "Total Packet Rate - {{datapath}}"
         },
         {
-          "expr": "rate(ovs_dp_lookups_lost[5m])",
+          "expr": "rate(ovs_dp_lookups_lost_total[5m])",
           "refId": "B",
           "legendFormat": "Packets Lost - {{datapath}}"
         }
@@ -790,7 +790,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(ovs_dp_lookups_hit[5m])) / (sum(rate(ovs_dp_lookups_hit[5m])) + sum(rate(ovs_dp_lookups_missed[5m])))",
+          "expr": "sum(rate(ovs_dp_lookups_hit_total[5m])) / (sum(rate(ovs_dp_lookups_hit_total[5m])) + sum(rate(ovs_dp_lookups_missed_total[5m])))",
           "refId": "A"
         }
       ],
@@ -854,7 +854,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(ovs_dp_lookups_missed[1m]))",
+          "expr": "sum(rate(ovs_dp_lookups_missed_total[1m]))",
           "refId": "A"
         }
       ],
@@ -914,7 +914,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(ovs_dp_lookups_lost[1m]))",
+          "expr": "sum(rate(ovs_dp_lookups_lost_total[1m]))",
           "refId": "A"
         }
       ],

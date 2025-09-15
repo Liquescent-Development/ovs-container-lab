@@ -55,34 +55,34 @@ class TrafficGenerator:
         """Get configuration with proper rate limiting"""
         configs = {
             'standard': {
-                'threads': 2,  # Reduced from 4
-                'max_processes': 4,  # Limit concurrent processes
-                'packets_per_second': 100,  # Rate limit
-                'bandwidth_mbps': 10,  # Bandwidth limit
-                'burst_size': 50,  # Smaller bursts
-                'delay_between_bursts': 0.1,  # 100ms between bursts
-                'connection_limit': 10,  # Max concurrent connections
-                'cpu_limit': 25,  # CPU percentage limit
-            },
-            'high': {
-                'threads': 3,
-                'max_processes': 6,
-                'packets_per_second': 500,
-                'bandwidth_mbps': 50,
+                'threads': 4,
+                'max_processes': 10,
+                'packets_per_second': 1000,
+                'bandwidth_mbps': 100,  # 100 Mbps for standard
                 'burst_size': 100,
                 'delay_between_bursts': 0.05,
                 'connection_limit': 20,
-                'cpu_limit': 40,
+                'cpu_limit': 50,
             },
-            'chaos': {
-                'threads': 4,  # Drastically reduced from 32
-                'max_processes': 8,  # Reduced from unlimited
-                'packets_per_second': 1000,
-                'bandwidth_mbps': 100,
+            'high': {
+                'threads': 6,
+                'max_processes': 20,
+                'packets_per_second': 5000,
+                'bandwidth_mbps': 500,  # 500 Mbps for high
                 'burst_size': 200,
                 'delay_between_bursts': 0.02,
-                'connection_limit': 30,
-                'cpu_limit': 50,  # Never exceed 50% CPU
+                'connection_limit': 40,
+                'cpu_limit': 70,
+            },
+            'chaos': {
+                'threads': 8,
+                'max_processes': 30,
+                'packets_per_second': 10000,
+                'bandwidth_mbps': 1000,  # 1 Gbps for chaos
+                'burst_size': 500,
+                'delay_between_bursts': 0.01,
+                'connection_limit': 60,
+                'cpu_limit': 80,
             }
         }
         return configs.get(mode, configs['standard'])
@@ -267,9 +267,8 @@ class TrafficGenerator:
             'iperf3',
             '-c', target_info['ip'],
             '-p', str(port),
-            '-t', '3',  # 3 seconds for more realistic test
+            '-t', '0',  # 0 means run continuously
             '-b', bandwidth,  # Bandwidth limit
-            '--json'  # JSON output for parsing
         ]
 
         if protocol:
@@ -278,28 +277,17 @@ class TrafficGenerator:
         self.wait_for_slot()
 
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            # Run iperf3 in background continuously
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             with self.process_lock:
                 self.active_processes.append(proc)
 
-            output, _ = proc.communicate(timeout=5)
+            # Don't wait for it to complete - it runs continuously
+            print(f"Started iperf3 to {target_info['name']} ({target_info['ip']}:{port}) with {bandwidth} bandwidth")
+            self.stats['iperf_sessions'] += 1
 
-            # Parse iperf3 JSON output for stats
-            try:
-                result = json.loads(output)
-                if 'end' in result and 'sum_sent' in result['end']:
-                    bytes_sent = result['end']['sum_sent']['bytes']
-                    self.stats['iperf_bytes'] += bytes_sent
-                    self.stats['bytes_sent'] += bytes_sent
-                    self.stats[f"{target_info['tier']}_bandwidth"] += bytes_sent
-            except:
-                pass
-
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        except Exception:
-            pass
-        finally:
+        except Exception as e:
+            print(f"Failed to start iperf3 to {target_info['name']}: {e}")
             self.cleanup_process(proc)
 
     def traffic_pattern_normal(self, target_info):

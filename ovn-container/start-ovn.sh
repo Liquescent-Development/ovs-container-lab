@@ -157,6 +157,24 @@ if [ "$ENABLE_DOCKER_DRIVER" == "true" ]; then
     fi
 fi
 
+# Start OVN exporter
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting OVN exporter..."
+/usr/local/bin/ovn-exporter \
+    --web.listen-address=:9476 \
+    --database.northbound.socket.remote=unix:/var/run/ovn/ovnnb_db.sock \
+    --database.southbound.socket.remote=unix:/var/run/ovn/ovnsb_db.sock \
+    --ovn.poll-interval=15 \
+    --log.level=info &
+
+# Wait for exporter to start
+for i in {1..5}; do
+    if netstat -tlnp 2>/dev/null | grep -q ':9476'; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] OVN exporter started on port 9476"
+        break
+    fi
+    sleep 1
+done
+
 # Mark as ready
 touch /tmp/ovn-ready
 

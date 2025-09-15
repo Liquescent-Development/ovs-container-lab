@@ -110,6 +110,12 @@ clean: down
 clean-all: lima-delete
 	@echo "✅ Everything cleaned up including VM"
 
+reload-prometheus:
+	@echo "Reloading Prometheus configuration..."
+	@curl -X POST http://localhost:9090/-/reload
+	@echo ""
+	@echo "✅ Prometheus configuration reloaded"
+
 status:
 	@echo "=== VM Status ==="
 	@limactl list ovs-lab 2>/dev/null || echo "VM not created"
@@ -222,7 +228,8 @@ traffic-start:
 traffic-run:
 	@echo "Generating standard traffic patterns to VPC containers..."
 	@echo "Starting controlled traffic generator..."
-	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py traffic start --mode standard"
+	@limactl shell ovs-lab -- bash -c "sudo docker exec -d traffic-gen-a bash -c 'cd /workspace && python3 traffic-gen.py standard'"
+	@limactl shell ovs-lab -- bash -c "sudo docker exec -d traffic-gen-b bash -c 'cd /workspace && python3 traffic-gen.py standard'"
 	@echo "Traffic is being generated to VPC-A and VPC-B containers. Check Grafana dashboards to see the traffic."
 	@echo "Use 'make traffic-status' to check status or 'make traffic-stop' to stop."
 
@@ -236,7 +243,8 @@ traffic-status:
 traffic-heavy:
 	@echo "Generating heavy traffic load to VPC containers..."
 	@echo "Starting HIGH intensity traffic..."
-	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py traffic start --mode high"
+	@limactl shell ovs-lab -- bash -c "sudo docker exec -d traffic-gen-a bash -c 'cd /workspace && python3 traffic-gen.py high'"
+	@limactl shell ovs-lab -- bash -c "sudo docker exec -d traffic-gen-b bash -c 'cd /workspace && python3 traffic-gen.py high'"
 	@echo "Heavy traffic is being generated to VPC-A and VPC-B. Monitor impact in Grafana."
 
 traffic-extreme:
@@ -247,18 +255,21 @@ traffic-extreme:
 traffic-chaos:
 	@echo "🔥 CHAOS MODE - Controlled heavy traffic to VPC containers..."
 	@echo "WARNING: This will generate heavy traffic (rate limited to prevent system hang)!"
-	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py traffic start --mode chaos"
+	@limactl shell ovs-lab -- bash -c "sudo docker exec -d traffic-gen-a bash -c 'cd /workspace && python3 traffic-gen.py chaos'"
+	@limactl shell ovs-lab -- bash -c "sudo docker exec -d traffic-gen-b bash -c 'cd /workspace && python3 traffic-gen.py chaos'"
+	@limactl shell ovs-lab -- bash -c "sudo docker exec -d traffic-gen-b python3 /workspace/traffic-gen.py --mode chaos --targets 10.1.1.10,10.1.2.10,10.1.3.10"
 	@echo "Controlled chaos traffic started to VPC-A and VPC-B. Monitor in Grafana."
 
 traffic-stop:
 	@echo "Stopping all traffic generator processes..."
-	@limactl shell ovs-lab -- bash -c "cd /home/lima/code/ovs-container-lab && sudo python3 orchestrator.py traffic stop"
+	@limactl shell ovs-lab -- bash -c "sudo docker exec traffic-gen-a pkill -f traffic-gen.py || true"
+	@limactl shell ovs-lab -- bash -c "sudo docker exec traffic-gen-b pkill -f traffic-gen.py || true"
 	@echo "All traffic generation stopped. Container is still running for future use."
 	@echo "Use 'make traffic-stop-container' to stop the container completely."
 
 traffic-stop-container:
-	@echo "Stopping traffic generator container..."
-	@limactl shell ovs-lab -- sudo docker stop traffic-generator || true
+	@echo "Stopping traffic generator containers..."
+	@limactl shell ovs-lab -- sudo docker stop traffic-gen-a traffic-gen-b || true
 	@limactl shell ovs-lab -- sudo docker rm traffic-generator || true
 	@echo "Traffic generator container stopped and removed."
 

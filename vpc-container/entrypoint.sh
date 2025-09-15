@@ -6,9 +6,9 @@ TIER=${TIER:-web}
 
 echo "Starting VPC container (tier: $TIER)..."
 
-# Start iperf3 server in background
+# Start iperf3 server in background (bind to IPv4)
 echo "Starting iperf3 server on port 5201..."
-iperf3 -s -D
+iperf3 -s -B 0.0.0.0 -D
 
 # Start tier-specific services
 case "$TIER" in
