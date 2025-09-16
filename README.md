@@ -43,7 +43,7 @@ When you run `make up` for the first time, Lima will show:
 ```
 
 **Just press Enter** to accept the default configuration. The initial setup will:
-1. Download Ubuntu 22.04 (~500MB)
+1. Download Ubuntu 24.04 (~500MB)
 2. Create the VM
 3. Install Docker, OVS, and OVN
 4. Configure networking
