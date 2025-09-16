@@ -174,27 +174,199 @@ Traffic Flow Examples:
 
 ## Configuration
 
-The lab supports multiple network configurations via YAML files:
+The lab uses YAML-based network configuration to define the entire topology, container placement, and network settings. The configuration system is flexible and supports everything from simple single-host setups to complex multi-tenant deployments.
+
+### Using Configuration Files
 
 ```bash
 # Use default configuration (network-config.yaml)
 make up
 
-# Use a specific configuration
+# Use a specific configuration file
 NETWORK_CONFIG=network-config-simple.yaml make up
-NETWORK_CONFIG=network-config-multihost.yaml make up
+
+# Configuration is used by all commands
+NETWORK_CONFIG=my-custom-config.yaml make check
+NETWORK_CONFIG=my-custom-config.yaml make test
 ```
 
-### Configuration Files
+### Provided Configurations
 
-- `network-config.yaml` - Default production-like config
-- `network-config-simple.yaml` - Single-host development setup
-- Custom configs can define:
-  - Multiple hosts and chassis
-  - VPC topologies and subnets
-  - Container placement and IPs
-  - Persistent MAC addresses
-  - OVN clustering for HA
+| File | Description | Use Case |
+|------|-------------|----------|
+| `network-config.yaml` | Default configuration with full topology | Production-like testing |
+| `network-config-simple.yaml` | Simplified single-host setup | Development and debugging |
+| `network-config-multihost.yaml` | Multi-host setup (future) | Distributed deployments |
+
+### Configuration Structure
+
+The configuration file defines your entire network topology:
+
+```yaml
+# Global settings
+global:
+  encapsulation: geneve    # Tunnel type (geneve/vxlan)
+  mtu: 1400                # Network MTU
+
+# Host definitions (future multi-host support)
+hosts:
+  lima-host:
+    chassis_name: chassis-host
+    management_ip: 192.168.100.1
+    tunnel_ip: 192.168.100.1
+    roles:
+      - ovn-central
+      - ovn-controller
+      - gateway
+
+# VPC definitions with tenant isolation
+vpcs:
+  vpc-a:
+    tenant: tenant-1           # Tenant identifier
+    cidr: 10.0.0.0/16          # VPC CIDR block
+    router:
+      name: lr-vpc-a           # Logical router name
+      mac: "00:00:00:01:00:00" # Router MAC
+    switches:                   # Logical switches (subnets)
+      - name: ls-vpc-a-web
+        cidr: 10.0.1.0/24
+        tier: web
+      - name: ls-vpc-a-app
+        cidr: 10.0.2.0/24
+        tier: app
+      - name: ls-vpc-a-db
+        cidr: 10.0.3.0/24
+        tier: db
+
+# Transit network for inter-VPC and external connectivity
+transit:
+  cidr: 192.168.100.0/24
+  gateway_router:
+    name: lr-gateway
+    mac: "00:00:00:00:00:01"
+
+# Container definitions with network assignments
+containers:
+  vpc-a-web:
+    host: lima-host            # Which host to run on
+    vpc: vpc-a                 # VPC assignment
+    switch: ls-vpc-a-web       # Logical switch connection
+    ip: 10.0.1.10              # Static IP address
+    mac: "02:00:00:01:01:0a"   # Persistent MAC address
+    tier: web                  # Tier classification
+```
+
+### Key Configuration Features
+
+#### Multi-Tenant Support
+Each VPC is assigned to a tenant, enabling complete isolation and separate monitoring:
+```yaml
+vpcs:
+  vpc-a:
+    tenant: tenant-1  # Isolated from tenant-2
+  vpc-b:
+    tenant: tenant-2  # Separate routing domain
+```
+
+#### Persistent MAC Addresses
+Containers maintain their MAC addresses across restarts:
+```yaml
+containers:
+  vpc-a-web:
+    mac: "02:00:00:01:01:0a"  # Survives container restarts
+```
+
+#### Flexible Subnet Design
+Create any number of subnets per VPC:
+```yaml
+switches:
+  - name: ls-vpc-a-dmz
+    cidr: 10.0.100.0/24
+    tier: dmz
+  - name: ls-vpc-a-mgmt
+    cidr: 10.0.200.0/24
+    tier: management
+```
+
+### Creating Custom Configurations
+
+1. **Copy an existing configuration as a template:**
+   ```bash
+   cp network-config.yaml my-config.yaml
+   ```
+
+2. **Modify the configuration for your needs:**
+   - Add/remove VPCs
+   - Change IP addressing schemes
+   - Add/remove containers
+   - Adjust subnet layouts
+
+3. **Validate your configuration:**
+   ```bash
+   python3 network_config_manager.py validate
+   ```
+
+4. **Use your configuration:**
+   ```bash
+   NETWORK_CONFIG=my-config.yaml make up
+   ```
+
+### Configuration Examples
+
+#### Simple Two-Tier Application
+```yaml
+vpcs:
+  app-vpc:
+    tenant: my-app
+    cidr: 172.16.0.0/16
+    switches:
+      - name: ls-frontend
+        cidr: 172.16.1.0/24
+      - name: ls-backend
+        cidr: 172.16.2.0/24
+
+containers:
+  frontend-1:
+    vpc: app-vpc
+    switch: ls-frontend
+    ip: 172.16.1.10
+  backend-1:
+    vpc: app-vpc
+    switch: ls-backend
+    ip: 172.16.2.10
+```
+
+#### Multi-Environment Setup
+```yaml
+vpcs:
+  dev:
+    tenant: development
+    cidr: 10.10.0.0/16
+  staging:
+    tenant: staging
+    cidr: 10.20.0.0/16
+  prod:
+    tenant: production
+    cidr: 10.30.0.0/16
+```
+
+### Configuration Management Tools
+
+The `network_config_manager.py` utility helps manage and validate configurations:
+
+```bash
+# Validate configuration
+python3 network_config_manager.py validate
+
+# Show configured hosts
+python3 network_config_manager.py show-hosts
+
+# Show containers for current host
+python3 network_config_manager.py show-containers
+
+# Show VPC configuration
+python3 network_config_manager.py show-vpcs
+```
 
 ## Network Diagnostics
 
