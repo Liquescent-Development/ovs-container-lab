@@ -255,6 +255,24 @@ sudo python3 orchestrator.py chaos latency --duration 60
 | Prometheus | http://localhost:9090 | - |
 | OVS Metrics | http://localhost:9475 | - |
 
+### Network Topology Performance Dashboard
+
+The comprehensive Grafana dashboard provides real-time visibility into all network topology components with multi-tenant grouping:
+
+![Network Topology and Performance Dashboard - Overview](assets/NETWORK_TOPOLOGY_AND_PERF_01.png)
+*Dashboard showing interface traffic, drops, errors, and OVS/OVN topology metrics grouped by tenant, VPC, and container*
+
+![Network Topology and Performance Dashboard - Detailed View](assets/NETWORK_TOPOLOGY_AND_PERF_02.png)
+*Detailed view of logical routers, switches, NAT rules, and system performance metrics*
+
+**Key Metrics Monitored:**
+- **Interface Traffic**: Packet rates and bandwidth by container, VPC, and tenant
+- **Network Health**: Packet drops and interface errors with multi-level grouping
+- **OVS Performance**: Bridge packet rates, datapath cache hit rates, active flows
+- **OVN Topology**: Logical switches and routers with tenant/VPC associations
+- **Router Metrics**: NAT rules, routing policies, load balancers per router
+- **System Overview**: Total interfaces, switch ports, and aggregate traffic rates
+
 ## Development & Debugging
 
 ```bash
