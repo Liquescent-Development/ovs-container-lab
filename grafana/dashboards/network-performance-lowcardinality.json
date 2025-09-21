@@ -140,7 +140,9 @@
           "select": [
             [
               {
-                "params": ["tenant_id"],
+                "params": [
+                  "tenant_id"
+                ],
                 "type": "field"
               }
             ]
@@ -219,10 +221,10 @@
       "targets": [
         {
           "groupBy": [],
-          "measurement": "ovs_ovs_interface_rx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT \n  non_negative_derivative(last(\"counter\"), 1s) AS \"RX Rate\"\nFROM \"ovs_ovs_interface_rx_packets_total\" \nWHERE $timeFilter AND time > now() - 1m\nGROUP BY \"uuid\"",
+          "query": "SELECT \n  non_negative_derivative(last(\"ovs_interface_rx_packets_total\"), 1s) AS \"RX Rate\"\nFROM \"ovs_prometheus\" \nWHERE $timeFilter AND time > now() - 1m\nGROUP BY \"uuid\"",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "table",
@@ -231,10 +233,10 @@
         },
         {
           "groupBy": [],
-          "measurement": "ovs_ovs_interface_tx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT \n  non_negative_derivative(last(\"counter\"), 1s) AS \"TX Rate\"\nFROM \"ovs_ovs_interface_tx_packets_total\" \nWHERE $timeFilter AND time > now() - 1m\nGROUP BY \"uuid\"",
+          "query": "SELECT \n  non_negative_derivative(last(\"ovs_interface_tx_packets_total\"), 1s) AS \"TX Rate\"\nFROM \"ovs_prometheus\" \nWHERE $timeFilter AND time > now() - 1m\nGROUP BY \"uuid\"",
           "rawQuery": true,
           "refId": "B",
           "resultFormat": "table",
@@ -326,7 +328,10 @@
       "id": 1,
       "options": {
         "legend": {
-          "calcs": ["mean", "lastNotNull"],
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -340,27 +345,37 @@
           "alias": "[$tag_ovs_host] $tag_tenant_id - $tag_uuid RX",
           "groupBy": [
             {
-              "params": ["$__interval"],
+              "params": [
+                "$__interval"
+              ],
               "type": "time"
             },
             {
-              "params": ["ovs_host"],
+              "params": [
+                "ovs_host"
+              ],
               "type": "tag"
             },
             {
-              "params": ["tenant_id"],
+              "params": [
+                "tenant_id"
+              ],
               "type": "tag"
             },
             {
-              "params": ["uuid"],
+              "params": [
+                "uuid"
+              ],
               "type": "tag"
             },
             {
-              "params": ["none"],
+              "params": [
+                "none"
+              ],
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_rx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -368,7 +383,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "ovs_interface_rx_packets_total"
+                ],
                 "type": "field"
               },
               {
@@ -376,7 +393,9 @@
                 "type": "mean"
               },
               {
-                "params": ["1s"],
+                "params": [
+                  "1s"
+                ],
                 "type": "non_negative_derivative"
               }
             ]
@@ -445,7 +464,10 @@
       "id": 2,
       "options": {
         "legend": {
-          "calcs": ["mean", "lastNotNull"],
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -459,27 +481,37 @@
           "alias": "[$tag_ovs_host] $tag_tenant_id - $tag_uuid TX",
           "groupBy": [
             {
-              "params": ["$__interval"],
+              "params": [
+                "$__interval"
+              ],
               "type": "time"
             },
             {
-              "params": ["ovs_host"],
+              "params": [
+                "ovs_host"
+              ],
               "type": "tag"
             },
             {
-              "params": ["tenant_id"],
+              "params": [
+                "tenant_id"
+              ],
               "type": "tag"
             },
             {
-              "params": ["uuid"],
+              "params": [
+                "uuid"
+              ],
               "type": "tag"
             },
             {
-              "params": ["none"],
+              "params": [
+                "none"
+              ],
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_tx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -487,7 +519,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "ovs_interface_tx_packets_total"
+                ],
                 "type": "field"
               },
               {
@@ -495,7 +529,9 @@
                 "type": "mean"
               },
               {
-                "params": ["1s"],
+                "params": [
+                  "1s"
+                ],
                 "type": "non_negative_derivative"
               }
             ]
@@ -564,7 +600,10 @@
       "id": 3,
       "options": {
         "legend": {
-          "calcs": ["mean", "lastNotNull"],
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -578,27 +617,37 @@
           "alias": "[$tag_ovs_host] $tag_tenant_id - $tag_uuid",
           "groupBy": [
             {
-              "params": ["$__interval"],
+              "params": [
+                "$__interval"
+              ],
               "type": "time"
             },
             {
-              "params": ["ovs_host"],
+              "params": [
+                "ovs_host"
+              ],
               "type": "tag"
             },
             {
-              "params": ["tenant_id"],
+              "params": [
+                "tenant_id"
+              ],
               "type": "tag"
             },
             {
-              "params": ["uuid"],
+              "params": [
+                "uuid"
+              ],
               "type": "tag"
             },
             {
-              "params": ["none"],
+              "params": [
+                "none"
+              ],
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_rx_bytes",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -606,7 +655,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "ovs_interface_rx_bytes"
+                ],
                 "type": "field"
               },
               {
@@ -614,7 +665,9 @@
                 "type": "mean"
               },
               {
-                "params": ["1s"],
+                "params": [
+                  "1s"
+                ],
                 "type": "non_negative_derivative"
               }
             ]
@@ -683,7 +736,10 @@
       "id": 4,
       "options": {
         "legend": {
-          "calcs": ["mean", "lastNotNull"],
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -697,27 +753,37 @@
           "alias": "[$tag_ovs_host] $tag_tenant_id - $tag_uuid",
           "groupBy": [
             {
-              "params": ["$__interval"],
+              "params": [
+                "$__interval"
+              ],
               "type": "time"
             },
             {
-              "params": ["ovs_host"],
+              "params": [
+                "ovs_host"
+              ],
               "type": "tag"
             },
             {
-              "params": ["tenant_id"],
+              "params": [
+                "tenant_id"
+              ],
               "type": "tag"
             },
             {
-              "params": ["uuid"],
+              "params": [
+                "uuid"
+              ],
               "type": "tag"
             },
             {
-              "params": ["none"],
+              "params": [
+                "none"
+              ],
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_tx_bytes",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -725,7 +791,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "ovs_interface_tx_bytes"
+                ],
                 "type": "field"
               },
               {
@@ -733,7 +801,9 @@
                 "type": "mean"
               },
               {
-                "params": ["1s"],
+                "params": [
+                  "1s"
+                ],
                 "type": "non_negative_derivative"
               }
             ]
@@ -784,7 +854,9 @@
       "options": {
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -797,15 +869,19 @@
           "alias": "Total RX",
           "groupBy": [
             {
-              "params": ["$__interval"],
+              "params": [
+                "$__interval"
+              ],
               "type": "time"
             },
             {
-              "params": ["null"],
+              "params": [
+                "null"
+              ],
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_rx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -813,7 +889,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "ovs_interface_rx_packets_total"
+                ],
                 "type": "field"
               },
               {
@@ -821,7 +899,9 @@
                 "type": "sum"
               },
               {
-                "params": ["1s"],
+                "params": [
+                  "1s"
+                ],
                 "type": "non_negative_derivative"
               }
             ]
@@ -871,7 +951,9 @@
       "options": {
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -884,15 +966,19 @@
           "alias": "Total TX",
           "groupBy": [
             {
-              "params": ["$__interval"],
+              "params": [
+                "$__interval"
+              ],
               "type": "time"
             },
             {
-              "params": ["null"],
+              "params": [
+                "null"
+              ],
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_tx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -900,7 +986,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "ovs_interface_tx_packets_total"
+                ],
                 "type": "field"
               },
               {
@@ -908,7 +996,9 @@
                 "type": "sum"
               },
               {
-                "params": ["1s"],
+                "params": [
+                  "1s"
+                ],
                 "type": "non_negative_derivative"
               }
             ]
@@ -922,7 +1012,13 @@
   ],
   "schemaVersion": 27,
   "style": "dark",
-  "tags": ["ovs", "influxdb", "network", "performance", "low-cardinality"],
+  "tags": [
+    "ovs",
+    "influxdb",
+    "network",
+    "performance",
+    "low-cardinality"
+  ],
   "templating": {
     "list": []
   },

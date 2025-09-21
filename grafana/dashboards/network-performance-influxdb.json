@@ -136,10 +136,10 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_rx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT non_negative_derivative(mean(\"counter\"), 1s) FROM \"ovs_ovs_interface_rx_packets_total\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
+          "query": "SELECT non_negative_derivative(mean(\"ovs_interface_rx_packets_total\"), 1s) FROM \"ovs_prometheus\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series",
@@ -147,7 +147,7 @@
             [
               {
                 "params": [
-                  "counter"
+                  "ovs_interface_rx_packets_total"
                 ],
                 "type": "field"
               },
@@ -283,10 +283,10 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_tx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT non_negative_derivative(mean(\"counter\"), 1s) FROM \"ovs_ovs_interface_tx_packets_total\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
+          "query": "SELECT non_negative_derivative(mean(\"ovs_interface_tx_packets_total\"), 1s) FROM \"ovs_prometheus\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series",
@@ -294,7 +294,7 @@
             [
               {
                 "params": [
-                  "counter"
+                  "ovs_interface_tx_packets_total"
                 ],
                 "type": "field"
               },
@@ -430,10 +430,10 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_rx_bytes",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT non_negative_derivative(mean(\"counter\"), 1s) FROM \"ovs_ovs_interface_rx_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
+          "query": "SELECT non_negative_derivative(mean(\"ovs_interface_rx_bytes\"), 1s) FROM \"ovs_prometheus\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series",
@@ -441,7 +441,7 @@
             [
               {
                 "params": [
-                  "counter"
+                  "ovs_interface_rx_bytes"
                 ],
                 "type": "field"
               },
@@ -577,10 +577,10 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_tx_bytes",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT non_negative_derivative(mean(\"counter\"), 1s) FROM \"ovs_ovs_interface_tx_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
+          "query": "SELECT non_negative_derivative(mean(\"ovs_interface_tx_bytes\"), 1s) FROM \"ovs_prometheus\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series",
@@ -588,7 +588,7 @@
             [
               {
                 "params": [
-                  "counter"
+                  "ovs_interface_tx_bytes"
                 ],
                 "type": "field"
               },
@@ -721,10 +721,10 @@
               "type": "tag"
             }
           ],
-          "measurement": "ovs_ovs_interface_external_ids",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT last(\"gauge\") AS \"Tenant\" FROM \"ovs_ovs_interface_external_ids\" WHERE \"key\" = 'tenant_id' AND $timeFilter GROUP BY \"uuid\", \"value\"",
+          "query": "SELECT last(\"ovs_interface_external_ids\") AS \"Tenant\" FROM \"ovs_prometheus\" WHERE \"key\" = 'tenant_id' AND $timeFilter GROUP BY \"uuid\", \"value\"",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "table",
@@ -732,7 +732,7 @@
             [
               {
                 "params": [
-                  "gauge"
+                  "ovs_interface_external_ids"
                 ],
                 "type": "field"
               },
@@ -874,7 +874,7 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_rx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -883,7 +883,7 @@
             [
               {
                 "params": [
-                  "counter"
+                  "ovs_interface_rx_packets_total"
                 ],
                 "type": "field"
               },
@@ -921,7 +921,7 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_tx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "B",
@@ -930,7 +930,7 @@
             [
               {
                 "params": [
-                  "counter"
+                  "ovs_interface_tx_packets_total"
                 ],
                 "type": "field"
               },
@@ -1076,10 +1076,10 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_rx_dropped_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT non_negative_derivative(mean(\"counter\"), 1s) FROM \"ovs_ovs_interface_rx_dropped_total\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
+          "query": "SELECT non_negative_derivative(mean(\"ovs_interface_rx_dropped_total\"), 1s) FROM \"ovs_prometheus\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series",
@@ -1087,7 +1087,7 @@
             [
               {
                 "params": [
-                  "counter"
+                  "ovs_interface_rx_dropped_total"
                 ],
                 "type": "field"
               },
@@ -1233,10 +1233,10 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_rx_errors_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT non_negative_derivative(mean(\"counter\"), 1s) FROM \"ovs_ovs_interface_rx_errors_total\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
+          "query": "SELECT non_negative_derivative(mean(\"ovs_interface_rx_errors_total\"), 1s) FROM \"ovs_prometheus\" WHERE $timeFilter GROUP BY time($__interval), \"tenant_id\", \"ovs_host\" fill(none)",
           "rawQuery": true,
           "refId": "A",
           "resultFormat": "time_series",
@@ -1244,7 +1244,7 @@
             [
               {
                 "params": [
-                  "counter"
+                  "ovs_interface_rx_errors_total"
                 ],
                 "type": "field"
               },
@@ -1348,17 +1348,17 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_dp_flows",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
-          "query": "SELECT mean(\"gauge\") FROM \"ovs_ovs_dp_flows\" WHERE $timeFilter GROUP BY time($__interval), \"ovs_host\" fill(null)",
+          "query": "SELECT mean(\"ovs_dp_flows\") FROM \"ovs_prometheus\" WHERE $timeFilter GROUP BY time($__interval), \"ovs_host\" fill(null)",
           "refId": "A",
           "resultFormat": "time_series",
           "select": [
             [
               {
                 "params": [
-                  "gauge"
+                  "ovs_dp_flows"
                 ],
                 "type": "field"
               },
@@ -1489,7 +1489,7 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_dp_lookups_hit_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -1498,7 +1498,7 @@
             [
               {
                 "params": [
-                  "counter"
+                  "ovs_dp_lookups_hit_total"
                 ],
                 "type": "field"
               },
@@ -1542,7 +1542,7 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_dp_lookups_missed_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "B",
@@ -1551,7 +1551,7 @@
             [
               {
                 "params": [
-                  "counter"
+                  "ovs_dp_lookups_missed_total"
                 ],
                 "type": "field"
               },
@@ -1664,7 +1664,7 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_dp_bridge_interfaces",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -1673,7 +1673,7 @@
             [
               {
                 "params": [
-                  "gauge"
+                  "ovs_dp_bridge_interfaces"
                 ],
                 "type": "field"
               },
@@ -1802,7 +1802,7 @@
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_external_ids",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -1811,7 +1811,7 @@
             [
               {
                 "params": [
-                  "gauge"
+                  "ovs_interface_external_ids"
                 ],
                 "type": "field"
               },

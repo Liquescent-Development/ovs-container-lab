@@ -76,7 +76,10 @@
       "id": 1,
       "options": {
         "legend": {
-          "calcs": ["mean", "lastNotNull"],
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -90,19 +93,25 @@
           "alias": "$tag_uuid RX",
           "groupBy": [
             {
-              "params": ["$__interval"],
+              "params": [
+                "$__interval"
+              ],
               "type": "time"
             },
             {
-              "params": ["uuid"],
+              "params": [
+                "uuid"
+              ],
               "type": "tag"
             },
             {
-              "params": ["none"],
+              "params": [
+                "none"
+              ],
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_rx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -110,7 +119,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "ovs_interface_rx_packets_total"
+                ],
                 "type": "field"
               },
               {
@@ -118,7 +129,9 @@
                 "type": "mean"
               },
               {
-                "params": ["1s"],
+                "params": [
+                  "1s"
+                ],
                 "type": "non_negative_derivative"
               }
             ]
@@ -187,7 +200,10 @@
       "id": 2,
       "options": {
         "legend": {
-          "calcs": ["mean", "lastNotNull"],
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -201,19 +217,25 @@
           "alias": "$tag_uuid TX",
           "groupBy": [
             {
-              "params": ["$__interval"],
+              "params": [
+                "$__interval"
+              ],
               "type": "time"
             },
             {
-              "params": ["uuid"],
+              "params": [
+                "uuid"
+              ],
               "type": "tag"
             },
             {
-              "params": ["none"],
+              "params": [
+                "none"
+              ],
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_tx_packets_total",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -221,7 +243,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "ovs_interface_tx_packets_total"
+                ],
                 "type": "field"
               },
               {
@@ -229,7 +253,9 @@
                 "type": "mean"
               },
               {
-                "params": ["1s"],
+                "params": [
+                  "1s"
+                ],
                 "type": "non_negative_derivative"
               }
             ]
@@ -282,7 +308,9 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -295,7 +323,9 @@
           "alias": "$tag_uuid",
           "groupBy": [
             {
-              "params": ["uuid"],
+              "params": [
+                "uuid"
+              ],
               "type": "tag"
             }
           ],
@@ -307,7 +337,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "counter"
+                ],
                 "type": "field"
               },
               {
@@ -364,7 +396,9 @@
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -377,7 +411,9 @@
           "alias": "$tag_uuid",
           "groupBy": [
             {
-              "params": ["uuid"],
+              "params": [
+                "uuid"
+              ],
               "type": "tag"
             }
           ],
@@ -389,7 +425,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "counter"
+                ],
                 "type": "field"
               },
               {
@@ -462,7 +500,10 @@
       "id": 5,
       "options": {
         "legend": {
-          "calcs": ["mean", "lastNotNull"],
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -476,19 +517,25 @@
           "alias": "$tag_uuid",
           "groupBy": [
             {
-              "params": ["$__interval"],
+              "params": [
+                "$__interval"
+              ],
               "type": "time"
             },
             {
-              "params": ["uuid"],
+              "params": [
+                "uuid"
+              ],
               "type": "tag"
             },
             {
-              "params": ["none"],
+              "params": [
+                "none"
+              ],
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_rx_bytes",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -496,7 +543,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "ovs_interface_rx_bytes"
+                ],
                 "type": "field"
               },
               {
@@ -504,7 +553,9 @@
                 "type": "mean"
               },
               {
-                "params": ["1s"],
+                "params": [
+                  "1s"
+                ],
                 "type": "non_negative_derivative"
               }
             ]
@@ -573,7 +624,10 @@
       "id": 6,
       "options": {
         "legend": {
-          "calcs": ["mean", "lastNotNull"],
+          "calcs": [
+            "mean",
+            "lastNotNull"
+          ],
           "displayMode": "table",
           "placement": "bottom"
         },
@@ -587,19 +641,25 @@
           "alias": "$tag_uuid",
           "groupBy": [
             {
-              "params": ["$__interval"],
+              "params": [
+                "$__interval"
+              ],
               "type": "time"
             },
             {
-              "params": ["uuid"],
+              "params": [
+                "uuid"
+              ],
               "type": "tag"
             },
             {
-              "params": ["none"],
+              "params": [
+                "none"
+              ],
               "type": "fill"
             }
           ],
-          "measurement": "ovs_ovs_interface_tx_bytes",
+          "measurement": "ovs_prometheus",
           "orderByTime": "ASC",
           "policy": "default",
           "refId": "A",
@@ -607,7 +667,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "ovs_interface_tx_bytes"
+                ],
                 "type": "field"
               },
               {
@@ -615,7 +677,9 @@
                 "type": "mean"
               },
               {
-                "params": ["1s"],
+                "params": [
+                  "1s"
+                ],
                 "type": "non_negative_derivative"
               }
             ]
@@ -660,7 +724,9 @@
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -679,7 +745,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "counter"
+                ],
                 "type": "field"
               },
               {
@@ -728,7 +796,9 @@
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -747,7 +817,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "counter"
+                ],
                 "type": "field"
               },
               {
@@ -796,7 +868,9 @@
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -815,7 +889,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "counter"
+                ],
                 "type": "field"
               },
               {
@@ -864,7 +940,9 @@
         "justifyMode": "center",
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -883,7 +961,9 @@
           "select": [
             [
               {
-                "params": ["counter"],
+                "params": [
+                  "counter"
+                ],
                 "type": "field"
               },
               {
@@ -902,7 +982,11 @@
   "refresh": "5s",
   "schemaVersion": 27,
   "style": "dark",
-  "tags": ["ovs", "influxdb", "monitoring"],
+  "tags": [
+    "ovs",
+    "influxdb",
+    "monitoring"
+  ],
   "templating": {
     "list": []
   },
@@ -911,8 +995,24 @@
     "to": "now"
   },
   "timepicker": {
-    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
-    "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ],
+    "time_options": [
+      "5m",
+      "15m",
+      "1h",
+      "6h",
+      "12h",
+      "24h",
+      "2d",
+      "7d",
+      "30d"
+    ]
   },
   "timezone": "",
   "title": "OVS Metrics (InfluxDB)",
