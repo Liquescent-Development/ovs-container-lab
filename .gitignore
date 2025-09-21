@@ -5,3 +5,31 @@ __pycache__/
 *.pyc
 .network-state.json
 IMPROVEMENTS.md
+.claude
+.vscode
+
+# OVS Container Network plugin build artifacts
+ovs-container-network/bin/
+ovs-container-network/sbin/
+ovs-container-network/etc/
+ovs-container-network/dev/
+ovs-container-network/home/
+ovs-container-network/lib/
+ovs-container-network/lib64/
+ovs-container-network/media/
+ovs-container-network/mnt/
+ovs-container-network/opt/
+ovs-container-network/proc/
+ovs-container-network/root/
+ovs-container-network/run/
+ovs-container-network/srv/
+ovs-container-network/sys/
+ovs-container-network/tmp/
+ovs-container-network/usr/
+ovs-container-network/var/
+ovs-container-network/.dockerenv
+ovs-container-network/ovs-container-network
+
+# Generic bin/sbin in root
+bin/
+sbin/

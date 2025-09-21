@@ -59,7 +59,8 @@ provision:
         make \
         net-tools \
         jq \
-        python3-pip
+        python3-pip \
+        build-essential
 
       # Install Docker
       if ! command -v docker &> /dev/null; then
@@ -90,6 +91,20 @@ provision:
         DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" docker-compose-plugin
       fi
 
+      # Install Go for testing
+      if ! command -v go &> /dev/null; then
+        echo "Installing Go for testing..."
+        GO_VERSION="1.25.1"
+        ARCH=$(dpkg --print-architecture)
+        curl -L "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz
+        tar -C /usr/local -xzf /tmp/go.tar.gz
+        rm /tmp/go.tar.gz
+        ln -sf /usr/local/go/bin/go /usr/bin/go
+        ln -sf /usr/local/go/bin/gofmt /usr/bin/gofmt
+        echo "export PATH=/usr/local/go/bin:\$PATH" >> /etc/profile
+        echo "Go ${GO_VERSION} installed successfully"
+      fi
+
       # Update package lists to ensure we get the latest OVS/OVN versions
       echo "Updating package lists..."
       DEBIAN_FRONTEND=noninteractive apt-get update
@@ -117,6 +132,9 @@ provision:
       # For now, just set defaults that will be updated
       ovs-vsctl set open_vswitch . external_ids:system-id=chassis-host
       ovs-vsctl set open_vswitch . external_ids:ovn-encap-type=geneve
+
+      # Ensure system-id.conf matches the database for OVS exporter
+      echo "chassis-host" > /etc/openvswitch/system-id.conf
 
       # Create OVN integration bridge
       ovs-vsctl --may-exist add-br br-int
@@ -170,6 +188,9 @@ provision:
 # Environment variables
 env:
   DOCKER_HOST: unix:///var/run/docker.sock
+
+# Disable host environment propagation to avoid path issues
+propagateProxyEnv: false
 
 # SSH config
 ssh:

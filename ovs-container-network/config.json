@@ -1,0 +1,65 @@
+{
+  "description": "OVS Container Network Plugin - Docker network driver for Open vSwitch and OVN",
+  "documentation": "https://github.com/ovs-container-lab/ovs-container-network",
+  "entrypoint": ["/usr/local/bin/ovs-container-network"],
+  "network": {
+    "type": "host"
+  },
+  "interface": {
+    "types": ["docker.networkdriver/1.0"],
+    "socket": "ovs-net.sock"
+  },
+  "linux": {
+    "capabilities": ["CAP_NET_ADMIN", "CAP_SYS_ADMIN", "CAP_SYS_MODULE"],
+    "allowAllDevices": false,
+    "devices": [
+      {
+        "path": "/dev/net/tun"
+      }
+    ]
+  },
+  "mounts": [
+    {
+      "source": "/var/run/docker.sock",
+      "destination": "/var/run/docker.sock",
+      "type": "bind",
+      "options": ["rbind"]
+    },
+    {
+      "source": "/var/run/openvswitch",
+      "destination": "/var/run/openvswitch",
+      "type": "bind",
+      "options": ["rbind"]
+    },
+    {
+      "source": "/var/run/ovn",
+      "destination": "/var/run/ovn",
+      "type": "bind",
+      "options": ["rbind"]
+    },
+    {
+      "source": "/sys",
+      "destination": "/sys",
+      "type": "bind",
+      "options": ["rbind"]
+    }
+  ],
+  "propagatedmount": "/data",
+  "env": [
+    {
+      "name": "LOG_LEVEL",
+      "description": "Logging level (debug, info, warn, error)",
+      "value": "debug"
+    },
+    {
+      "name": "PLUGIN_DATA_DIR",
+      "description": "Directory for plugin persistent data",
+      "value": "/data"
+    }
+  ],
+  "args": {
+    "name": "ovs-container-network",
+    "description": "OVS Container Network Plugin",
+    "value": []
+  }
+}

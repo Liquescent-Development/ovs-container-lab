@@ -1,0 +1,35 @@
+# Ignore build artifacts and system directories
+bin/
+sbin/
+usr/
+etc/
+dev/
+home/
+lib/
+lib64/
+media/
+mnt/
+opt/
+proc/
+root/
+run/
+srv/
+sys/
+tmp/
+var/
+.dockerenv
+
+# Ignore the built binary
+ovs-container-network
+
+# Ignore git and IDE files
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Ignore temporary files
+*.tmp
+*.log
+*.swp
+*~

@@ -170,14 +170,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_packets_total[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "expr": "rate(ovs_interface_rx_packets_total[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant_id\"}",
           "legendFormat": "{{value}} {{uuid}} RX",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_packets_total[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "expr": "rate(ovs_interface_tx_packets_total[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant_id\"}",
           "legendFormat": "{{value}} {{uuid}} TX",
           "range": true,
           "refId": "B"
@@ -273,14 +273,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_bytes[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "expr": "rate(ovs_interface_rx_bytes[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant_id\"}",
           "legendFormat": "{{value}} {{uuid}} RX",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_bytes[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "expr": "rate(ovs_interface_tx_bytes[5m]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant_id\"}",
           "legendFormat": "{{value}} {{uuid}} TX",
           "range": true,
           "refId": "B"
@@ -438,28 +438,28 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_rx_packets_total[30s]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "expr": "rate(ovs_interface_rx_packets_total[30s]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant_id\"}",
           "legendFormat": "{{value}} {{uuid}} RX Rate",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "rate(ovs_interface_tx_packets_total[30s]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "expr": "rate(ovs_interface_tx_packets_total[30s]) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant_id\"}",
           "legendFormat": "{{value}} {{uuid}} TX Rate",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "(rate(ovs_interface_rx_errors_total[1m]) + rate(ovs_interface_rx_dropped_total[1m])) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "expr": "(rate(ovs_interface_rx_errors_total[1m]) + rate(ovs_interface_rx_dropped_total[1m])) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant_id\"}",
           "legendFormat": "{{value}} {{uuid}} RX Issues",
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "(rate(ovs_interface_tx_errors_total[1m]) + rate(ovs_interface_tx_dropped_total[1m])) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "expr": "(rate(ovs_interface_tx_errors_total[1m]) + rate(ovs_interface_tx_dropped_total[1m])) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant_id\"}",
           "legendFormat": "{{value}} {{uuid}} TX Issues",
           "range": true,
           "refId": "D"
@@ -684,7 +684,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "((rate(ovs_interface_rx_packets_total[1m]) > 0) or (rate(ovs_interface_tx_packets_total[1m]) > 0)) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant-id\"}",
+          "expr": "((rate(ovs_interface_rx_packets_total[1m]) > 0) or (rate(ovs_interface_tx_packets_total[1m]) > 0)) * on(uuid) group_left(value) ovs_interface_external_ids{key=\"tenant_id\"}",
           "legendFormat": "{{value}} {{uuid}} Activity",
           "range": true,
           "refId": "A"

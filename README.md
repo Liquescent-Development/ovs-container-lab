@@ -179,24 +179,22 @@ The lab uses YAML-based network configuration to define the entire topology, con
 ### Using Configuration Files
 
 ```bash
-# Use default configuration (network-config.yaml)
+# Start the environment
 make up
 
-# Use a specific configuration file
-NETWORK_CONFIG=network-config-simple.yaml make up
-
-# Configuration is used by all commands
-NETWORK_CONFIG=my-custom-config.yaml make check
-NETWORK_CONFIG=my-custom-config.yaml make test
+# Run diagnostics and tests
+make check
+make test
 ```
 
-### Provided Configurations
+### Docker Compose Profiles
 
-| File | Description | Use Case |
-|------|-------------|----------|
-| `network-config.yaml` | Default configuration with full topology | Production-like testing |
-| `network-config-simple.yaml` | Simplified single-host setup | Development and debugging |
-| `network-config-multihost.yaml` | Multi-host setup (future) | Distributed deployments |
+The lab uses Docker Compose profiles to manage different deployment scenarios:
+- Default profile: Core OVS/OVN infrastructure
+- `--profile testing`: Add test containers
+- `--profile traffic`: Add traffic generators
+- `--profile chaos`: Add chaos engineering tools
+- `--profile vpc`: Multi-VPC setup with OVN/FRR
 
 ### Configuration Structure
 
@@ -290,25 +288,18 @@ switches:
 
 ### Creating Custom Configurations
 
-1. **Copy an existing configuration as a template:**
-   ```bash
-   cp network-config.yaml my-config.yaml
-   ```
+Network topology is defined directly in docker-compose files:
 
-2. **Modify the configuration for your needs:**
-   - Add/remove VPCs
-   - Change IP addressing schemes
-   - Add/remove containers
-   - Adjust subnet layouts
+1. **Edit docker-compose.yml or docker-compose-simple.yml:**
+   - Define VPC networks with the OVS plugin
+   - Configure OVN logical switches and routers
+   - Set up container networking
 
-3. **Validate your configuration:**
+2. **Start your configuration:**
    ```bash
-   python3 network_config_manager.py validate
-   ```
-
-4. **Use your configuration:**
-   ```bash
-   NETWORK_CONFIG=my-config.yaml make up
+   docker compose up -d
+   # Or with profiles:
+   docker compose --profile vpc up -d
    ```
 
 ### Configuration Examples
@@ -350,22 +341,19 @@ vpcs:
     cidr: 10.30.0.0/16
 ```
 
-### Configuration Management Tools
+### Configuration Management
 
-The `network_config_manager.py` utility helps manage and validate configurations:
+The orchestrator-simple.py script provides management commands:
 
 ```bash
-# Validate configuration
-python3 network_config_manager.py validate
+# Set up OVN topology
+python3 orchestrator-simple.py setup-ovn
 
-# Show configured hosts
-python3 network_config_manager.py show-hosts
+# Configure VPC networks
+python3 orchestrator-simple.py setup-vpcs
 
-# Show containers for current host
-python3 network_config_manager.py show-containers
-
-# Show VPC configuration
-python3 network_config_manager.py show-vpcs
+# Run integration tests
+python3 orchestrator-simple.py test-integration
 ```
 
 ## Network Diagnostics
@@ -421,11 +409,22 @@ sudo python3 orchestrator.py chaos latency --duration 60
 
 ## Monitoring (Accessible from macOS)
 
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| Grafana | http://localhost:3000 | admin/admin |
-| Prometheus | http://localhost:9090 | - |
-| OVS Metrics | http://localhost:9475 | - |
+The lab includes dual monitoring stacks for flexibility:
+- **Prometheus + Grafana**: Time-tested metrics and visualization
+- **InfluxDB + Telegraf**: Alternative time-series database with efficient storage
+
+| Service | URL | Credentials | Description |
+|---------|-----|-------------|-------------|
+| Grafana | http://localhost:3000 | admin/admin | Dashboards and visualization |
+| Prometheus | http://localhost:9090 | - | Metrics storage (pull-based) |
+| InfluxDB | http://localhost:8086 | admin/admin | Time-series database |
+| OVS Metrics | http://localhost:9475 | - | Raw OVS exporter metrics |
+
+**Telegraf** automatically collects metrics from:
+- OVS Exporter (port 9475) - OVS bridge and interface statistics
+- OVN Exporter (port 9476) - OVN logical topology metrics
+- Docker containers - Resource usage and network stats
+- System metrics - CPU, memory, disk, network
 
 ### Network Topology Performance Dashboard
 
@@ -469,10 +468,11 @@ sudo docker exec ovn-central ovn-sbctl show  # OVN physical bindings
 
 1. **OVN Control Plane**: Defines logical network topology (routers, switches, ports)
 2. **OVS Data Plane**: Executes OpenFlow rules programmed by OVN controller
-3. **NAT Gateway**: Provides external internet connectivity for all VPCs
-4. **GENEVE Tunnels**: Automatic overlay networking between VPCs
-5. **Container Integration**: Each container bound to an OVN logical switch port
-6. **Orchestrator**: Python-based automation with proper error handling and verification
+3. **Docker Plugin Integration**: OVN Container Network Plugin handles container networking
+4. **NAT Gateway**: Provides external internet connectivity for all VPCs
+5. **GENEVE Tunnels**: Automatic overlay networking between VPCs
+6. **Container Integration**: Each container bound to an OVN logical switch port via the plugin
+7. **Orchestrator**: Python-based automation with proper error handling and verification
 
 ### Network Flow Types
 
@@ -494,20 +494,45 @@ ovs-container-lab/
 ├── lima.yaml                    # Lima VM configuration
 ├── Makefile                     # Simplified control commands
 ├── docker-compose.yml           # Container stack with profiles
-├── orchestrator.py              # Main automation with error handling
-├── network_config_manager.py    # Configuration parser and validator
-├── network-config.yaml          # Default network topology
-├── network-config-simple.yaml   # Single-host dev configuration
-├── CONFIG_SYSTEM.md            # Configuration documentation
+├── docker-compose-simple.yml    # Simplified stack using OVS plugin
+├── orchestrator.py              # Legacy orchestrator (reference only)
+├── orchestrator-simple.py       # Main orchestrator for setup and testing
 ├── scripts/
 │   ├── ovs-docker-*.sh         # OVS-Docker integration
 │   └── network-simulation/      # Traffic and chaos tools
 ├── ovn-container/               # OVN control plane
+├── ovs-container-network/       # OVN-based Docker network plugin
 ├── nat-gateway/                 # External connectivity
 ├── traffic-generator/           # Traffic generation tools
 ├── grafana/                     # Monitoring dashboards
 └── prometheus.yml               # Metrics configuration
 ```
+
+## OVN Container Network Plugin
+
+This lab includes a production-ready **OVN Container Network Plugin** that provides native Docker integration with Open Virtual Network (OVN). The plugin is located in the `ovs-container-network/` directory.
+
+**Key Features:**
+- ⚠️ **OVN Required**: All networks must specify OVN logical switch configuration
+- Automated OVN central management with `ovn.auto_create=true`
+- Multi-VPC and multi-tenant support
+- Transit networks for inter-VPC routing
+- Docker Compose compatibility
+- Persistent state management
+
+**Quick Usage:**
+```bash
+# The plugin requires OVN configuration for all networks
+docker network create --driver ovs-container-network:latest \
+  --subnet 10.0.0.0/24 \
+  --opt ovn.switch=ls-my-network \
+  --opt ovn.nb_connection=tcp:172.30.0.5:6641 \
+  --opt ovn.sb_connection=tcp:172.30.0.5:6642 \
+  --opt ovn.auto_create=true \
+  my-network
+```
+
+See `ovs-container-network/README.md` for complete documentation.
 
 ## Troubleshooting
 

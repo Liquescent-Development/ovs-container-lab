@@ -1,0 +1,52 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+ovs-container-network
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# Build directories
+dist/
+build/
+rootfs/
+
+# IDE specific files
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+*.iml
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Docker plugin specific
+*.sock
+plugin-config.json
+
+# Log files
+*.log
+
+# Environment files
+.env
+.env.local
+
+# Coverage reports
+coverage.html
+coverage.txt
+*.coverprofile

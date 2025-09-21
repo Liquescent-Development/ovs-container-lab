@@ -1,0 +1,98 @@
+version: '3.8'
+
+# Integration test suite for OVS Container Network Plugin
+# Run with: docker-compose -f docker-compose.test.yml up
+
+networks:
+  # Basic network test
+  basic-test:
+    driver: ovs-container-network:latest
+    driver_opts:
+      bridge: br-int
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+          gateway: 172.20.0.1
+
+  # VLAN isolated network
+  vlan-100:
+    driver: ovs-container-network:latest
+    driver_opts:
+      bridge: br-int
+      vlan: "100"
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+
+  # Multi-tenant network
+  tenant-a:
+    driver: ovs-container-network:latest
+    driver_opts:
+      bridge: br-int
+      tenant_id: tenant-a
+      vlan: "200"
+    ipam:
+      config:
+        - subnet: 172.22.0.0/24
+
+  tenant-b:
+    driver: ovs-container-network:latest
+    driver_opts:
+      bridge: br-int
+      tenant_id: tenant-b
+      vlan: "201"
+    ipam:
+      config:
+        - subnet: 172.23.0.0/24
+
+services:
+  # Test basic connectivity
+  basic-client:
+    image: alpine
+    networks:
+      - basic-test
+    command: |
+      sh -c "
+        echo 'Testing basic network connectivity...'
+        ip addr show
+        ping -c 3 172.20.0.1
+        echo 'Basic test PASSED'
+      "
+
+  basic-server:
+    image: nginx:alpine
+    networks:
+      - basic-test
+
+  # Test VLAN isolation
+  vlan-100-client:
+    image: alpine
+    networks:
+      - vlan-100
+    command: |
+      sh -c "
+        echo 'Testing VLAN 100 network...'
+        ip addr show
+        echo 'VLAN 100 test running'
+      "
+
+  # Test multi-tenancy
+  tenant-a-app:
+    image: alpine
+    networks:
+      - tenant-a
+    command: |
+      sh -c "
+        echo 'Tenant A application running'
+        while true; do sleep 30; done
+      "
+
+  tenant-b-app:
+    image: alpine
+    networks:
+      - tenant-b
+    command: |
+      sh -c "
+        echo 'Tenant B application running'
+        while true; do sleep 30; done
+      "

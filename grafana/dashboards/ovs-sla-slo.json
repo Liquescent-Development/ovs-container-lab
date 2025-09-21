@@ -372,7 +372,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (value) (\n  rate(ovs_interface_rx_packets_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant-id\"}\n)",
+          "expr": "sum by (value) (\n  rate(ovs_interface_rx_packets_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant_id\"}\n)",
           "legendFormat": "Tenant: {{value}}",
           "range": true,
           "refId": "A"
@@ -463,7 +463,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (value) (\n  rate(ovs_interface_rx_bytes{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant-id\"}\n)",
+          "expr": "sum by (value) (\n  rate(ovs_interface_rx_bytes{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant_id\"}\n)",
           "legendFormat": "Tenant: {{value}}",
           "range": true,
           "refId": "A"
@@ -599,7 +599,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (value) (\n  ovs_interface_external_ids{key=\"tenant-id\", system_id=\"$system_id\"}\n)",
+          "expr": "sum by (value) (\n  ovs_interface_external_ids{key=\"tenant_id\", system_id=\"$system_id\"}\n)",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -612,7 +612,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (value) (\n  increase(ovs_interface_rx_packets_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant-id\"}\n)",
+          "expr": "sum by (value) (\n  increase(ovs_interface_rx_packets_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant_id\"}\n)",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -625,7 +625,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (value) (\n  rate(ovs_interface_rx_dropped_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant-id\"}\n) / sum by (value) (\n  rate(ovs_interface_rx_packets_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant-id\"}\n)",
+          "expr": "sum by (value) (\n  rate(ovs_interface_rx_dropped_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant_id\"}\n) / sum by (value) (\n  rate(ovs_interface_rx_packets_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant_id\"}\n)",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",
@@ -638,7 +638,7 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "sum by (value) (\n  rate(ovs_interface_rx_errors_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant-id\"}\n) / sum by (value) (\n  rate(ovs_interface_rx_packets_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant-id\"}\n)",
+          "expr": "sum by (value) (\n  rate(ovs_interface_rx_errors_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant_id\"}\n) / sum by (value) (\n  rate(ovs_interface_rx_packets_total{system_id=\"$system_id\"}[5m]) * on(uuid) group_left(value) \n  ovs_interface_external_ids{key=\"tenant_id\"}\n)",
           "format": "table",
           "instant": true,
           "legendFormat": "__auto",

@@ -256,11 +256,10 @@ orchestrator.py                  # Main orchestration with proper ordering
 ├── TestRunner                  # Connectivity and verification testing
 └── ChaosEngineer              # Network chaos scenarios
 
-network_config_manager.py       # Configuration parsing and validation
-├── HostConfig                  # Multi-host support (future)
-├── ContainerConfig             # Container placement and networking
-├── VPCConfig                   # VPC topology definition
-└── OVNClusterConfig           # OVN clustering (future)
+# Configuration now handled directly in docker-compose files:
+# - VPC topology and OVN switches/routers defined in docker-compose.yml
+# - Container networking managed by Docker and OVS plugin
+# - No separate configuration files needed
 ```
 
 ### Makefile Targets

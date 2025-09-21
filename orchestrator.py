@@ -36,6 +36,192 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class DockerNetworkPlugin:
+    """Manages the OVS Container Network Docker plugin"""
+
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.plugin_name = "ovs-container-network:latest"
+        self.plugin_dir = "/home/lima/code/ovs-container-lab/ovs-container-network"
+
+    def is_installed(self) -> bool:
+        """Check if the plugin is installed and enabled"""
+        try:
+            result = subprocess.run(
+                ["docker", "plugin", "ls"],
+                capture_output=True, text=True, check=True
+            )
+            return self.plugin_name in result.stdout and "true" in result.stdout
+        except subprocess.CalledProcessError:
+            return False
+
+    def install(self) -> bool:
+        """Build and install the OVS network plugin"""
+        logger.info("Installing OVS Container Network plugin...")
+
+        # Check if we're in Lima VM
+        if not os.path.exists("/etc/os-release") or "Ubuntu" not in open("/etc/os-release").read():
+            logger.error("Plugin installation must be run inside the Lima VM")
+            logger.info("Run: limactl shell default")
+            return False
+
+        # Check prerequisites
+        if not self._check_prerequisites():
+            return False
+
+        # Navigate to plugin directory
+        if not os.path.exists(self.plugin_dir):
+            logger.error(f"Plugin directory not found: {self.plugin_dir}")
+            return False
+
+        os.chdir(self.plugin_dir)
+
+        # Build the Docker image using the Dockerfile
+        logger.info("Building Docker image for plugin...")
+        result = subprocess.run(["docker", "build", "-t", "ovs-container-network:build", "."],
+                              capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.error(f"Failed to build Docker image: {result.stderr}")
+            return False
+
+        # Create plugin from the Docker image
+        logger.info("Creating plugin from Docker image...")
+
+        # First, create a temporary container to export the rootfs
+        build_dir = "/tmp/ovs-container-network-build"
+        subprocess.run(["rm", "-rf", build_dir], check=False)
+        os.makedirs(build_dir, exist_ok=True)
+
+        # Export the image to rootfs
+        logger.info("Exporting image to rootfs...")
+        container_id = subprocess.run(
+            ["docker", "create", "ovs-container-network:build"],
+            capture_output=True, text=True
+        ).stdout.strip()
+
+        result = subprocess.run(
+            ["docker", "export", container_id, "-o", f"{build_dir}/rootfs.tar"],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            logger.error(f"Failed to export container: {result.stderr}")
+            subprocess.run(["docker", "rm", container_id], check=False)
+            return False
+
+        # Extract the rootfs
+        os.makedirs(f"{build_dir}/rootfs", exist_ok=True)
+        subprocess.run(["tar", "-xf", f"{build_dir}/rootfs.tar", "-C", f"{build_dir}/rootfs"], check=True)
+
+        # Clean up temporary container
+        subprocess.run(["docker", "rm", container_id], check=False)
+
+        # Copy config.json
+        subprocess.run(["cp", "config.json", f"{build_dir}/"], check=True)
+
+        # Remove existing plugin if present
+        subprocess.run(["docker", "plugin", "rm", "-f", self.plugin_name],
+                      capture_output=True, check=False)
+
+        # Create the plugin
+        logger.info("Creating Docker plugin...")
+        os.chdir(build_dir)
+        result = subprocess.run(["docker", "plugin", "create", self.plugin_name, "."],
+                              capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.error(f"Failed to create plugin: {result.stderr}")
+            return False
+
+        logger.info("Enabling plugin...")
+        result = subprocess.run(["docker", "plugin", "enable", self.plugin_name],
+                              capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.error(f"Failed to enable plugin: {result.stderr}")
+            return False
+
+        # Create br-int if it doesn't exist
+        result = subprocess.run(["sudo", "ovs-vsctl", "br-exists", "br-int"],
+                              capture_output=True, check=False)
+        if result.returncode != 0:
+            logger.info("Creating OVS integration bridge (br-int)...")
+            subprocess.run(["sudo", "ovs-vsctl", "add-br", "br-int"], check=True)
+
+        logger.info("✅ OVS Container Network Plugin installed successfully!")
+        return True
+
+    def uninstall(self) -> bool:
+        """Uninstall the OVS network plugin"""
+        logger.info("Uninstalling OVS Container Network plugin...")
+
+        # First disable the plugin
+        subprocess.run(["docker", "plugin", "disable", self.plugin_name],
+                      capture_output=True, check=False)
+
+        # Then remove it
+        result = subprocess.run(["docker", "plugin", "rm", "-f", self.plugin_name],
+                              capture_output=True, text=True)
+
+        if result.returncode == 0:
+            logger.info("✅ Plugin uninstalled successfully")
+            return True
+        else:
+            logger.error(f"Failed to uninstall plugin: {result.stderr}")
+            return False
+
+    def get_status(self) -> dict:
+        """Get detailed plugin status"""
+        status = {
+            "installed": False,
+            "enabled": False,
+            "version": None,
+            "networks": []
+        }
+
+        try:
+            # Check if plugin exists
+            result = subprocess.run(["docker", "plugin", "ls", "--format", "json"],
+                                  capture_output=True, text=True, check=True)
+            if result.stdout:
+                import json
+                for line in result.stdout.strip().split('\n'):
+                    plugin = json.loads(line)
+                    if plugin.get("Name", "").startswith("ovs-container-network"):
+                        status["installed"] = True
+                        status["enabled"] = plugin.get("Enabled", False)
+                        break
+
+            # Get networks using this driver
+            if status["installed"]:
+                result = subprocess.run(["docker", "network", "ls", "--format", "json"],
+                                      capture_output=True, text=True, check=True)
+                if result.stdout:
+                    for line in result.stdout.strip().split('\n'):
+                        net = json.loads(line)
+                        if net.get("Driver", "") == self.plugin_name:
+                            status["networks"].append(net.get("Name"))
+        except Exception as e:
+            logger.error(f"Error getting plugin status: {e}")
+
+        return status
+
+    def _check_prerequisites(self) -> bool:
+        """Check if all prerequisites are met"""
+        # Check Docker
+        result = subprocess.run(["which", "docker"], capture_output=True, check=False)
+        if result.returncode != 0:
+            logger.error("Docker is not installed")
+            return False
+
+        # Check OVS
+        result = subprocess.run(["which", "ovs-vsctl"], capture_output=True, check=False)
+        if result.returncode != 0:
+            logger.error("Open vSwitch is not installed")
+            return False
+
+        # Go is not needed since we use Docker to build the plugin
+
+        return True
+
+
 class NetworkReconciler:
     """Handles network state reconciliation for containers"""
 
@@ -963,15 +1149,11 @@ class OVNManager:
             return False
 
     def connect_container_to_bridge(self, container_name: str, ip_address: str, bridge: str = "br-int", mac_address: Optional[str] = None):
-        """Connect a container directly to an OVS bridge without OVN"""
-        logger.info(f"Connecting {container_name} to bridge {bridge} with IP {ip_address}")
-
-        # Try to get MAC from config if not provided
-        if not mac_address and self.config_manager:
-            container_config = self.config_manager.get_container_config(container_name)
-            if container_config:
-                mac_address = container_config.mac
-                logger.info(f"Using MAC from config: {mac_address}")
+        """REMOVED - Use Docker networks with OVS plugin instead"""
+        raise NotImplementedError("Manual container connection removed. Use Docker networks: orchestrator.py create-networks")
+        # Original implementation removed - 86 lines of veth pair management
+        # This functionality is now handled by Docker network driver
+        return  # Never reached, kept to avoid changing line numbers drastically
 
         try:
             # Get container PID
@@ -1048,16 +1230,17 @@ class OVNManager:
             return False
 
     def bind_container_to_ovn(self, container_name: str, switch_name: str, ip_address: str, mac_address: Optional[str] = None):
-        """Bind a container to an OVN logical switch port"""
-        logger.info(f"========================================")
-        logger.info(f"Binding container {container_name} to OVN switch {switch_name} with IP {ip_address}")
+        """REMOVED - Use Docker networks with OVS plugin instead"""
+        raise NotImplementedError("Manual OVN binding removed. Use Docker networks: orchestrator.py create-networks")
+        # Original implementation removed - 200+ lines of manual OVN port binding
+        # This functionality is now handled by Docker network driver
+        return  # Never reached
 
-        # Try to get MAC from config manager first
-        if not mac_address and self.config_manager:
-            container_config = self.config_manager.get_container_config(container_name)
-            if container_config:
-                mac_address = container_config.mac
-                logger.info(f"Using MAC from config: {mac_address}")
+        # Removed code that handled:
+        # - Manual veth pair creation
+        # - OVN logical port creation
+        # - MAC address management
+        # - Port binding to OVS bridge
 
         # Check if port already exists and if container is already connected
         port_name = f"lsp-{container_name}"
@@ -1314,8 +1497,11 @@ class OVNManager:
             return False
 
     def setup_nat_gateway_networking(self):
-        """Setup NAT Gateway with proper networking for external connectivity"""
-        logger.info("Setting up NAT Gateway networking...")
+        """REMOVED - NAT Gateway uses Docker networks now"""
+        raise NotImplementedError("NAT Gateway setup removed. Use Docker networks: orchestrator.py create-networks")
+        # Original implementation removed - 80+ lines of NAT gateway special handling
+        # NAT gateway now uses transit-net Docker network
+        return  # Never reached
 
         try:
             # 1. First ensure NAT Gateway container is running
@@ -1397,78 +1583,107 @@ class OVNManager:
             logger.error(f"Failed to setup NAT Gateway networking: {e}")
             return False
 
-    def setup_container_networking(self):
-        """Set up OVN networking for all test containers (excluding traffic generators)"""
-        logger.info("Setting up container networking via OVN...")
+    def create_docker_networks(self):
+        """Create Docker networks using the OVS plugin for each VPC subnet"""
+        logger.info("Creating Docker networks with OVS plugin...")
 
-        # Setup NAT Gateway first
-        self.setup_nat_gateway_networking()
+        plugin = DockerNetworkPlugin()
+        if not plugin.is_installed():
+            logger.error("OVS Container Network plugin is not installed")
+            logger.info("Run: orchestrator.py install-plugin")
+            return False
 
-        # Get container configuration from config manager or use defaults
-        container_configs = []
+        networks_created = []
+        networks_failed = []
 
-        if self.config_manager:
-            # Use configuration file for persistent MACs and IPs
-            logger.info("Using container configuration from config file")
-            for container_name, container_config in self.config_manager.containers.items():
-                # Skip traffic generators - they have their own setup method
-                if container_config.type != "traffic-generator":
-                    container_configs.append({
-                        "name": container_name,
-                        "switch": container_config.switch,
-                        "ip": container_config.ip,
-                        "mac": container_config.mac  # Use persistent MAC from config
-                    })
-        else:
-            # Fallback to hardcoded for backwards compatibility
-            logger.warning("No config manager, using hardcoded container list")
-            container_configs = [
-                # VPC-A containers (no traffic generators here)
-                {"name": "vpc-a-web", "switch": "ls-vpc-a-web", "ip": "10.0.1.10", "mac": None},
-                {"name": "vpc-a-app", "switch": "ls-vpc-a-app", "ip": "10.0.2.10", "mac": None},
-                {"name": "vpc-a-db", "switch": "ls-vpc-a-db", "ip": "10.0.3.10", "mac": None},
-                # VPC-B containers (no traffic generators here)
-                {"name": "vpc-b-web", "switch": "ls-vpc-b-web", "ip": "10.1.1.10", "mac": None},
-                {"name": "vpc-b-app", "switch": "ls-vpc-b-app", "ip": "10.1.2.10", "mac": None},
-                {"name": "vpc-b-db", "switch": "ls-vpc-b-db", "ip": "10.1.3.10", "mac": None},
+        # Define network configurations with OVN switch mapping
+        network_configs = [
+            # VPC-A networks
+            {"name": "vpc-a-web-net", "subnet": "10.0.1.0/24", "tenant": "tenant-1", "vlan": "101", "ovn_switch": "ls-vpc-a-web"},
+            {"name": "vpc-a-app-net", "subnet": "10.0.2.0/24", "tenant": "tenant-1", "vlan": "102", "ovn_switch": "ls-vpc-a-app"},
+            {"name": "vpc-a-db-net", "subnet": "10.0.3.0/24", "tenant": "tenant-1", "vlan": "103", "ovn_switch": "ls-vpc-a-db"},
+            {"name": "vpc-a-test-net", "subnet": "10.0.4.0/24", "tenant": "tenant-1", "vlan": "104", "ovn_switch": "ls-vpc-a-test"},
+            # VPC-B networks
+            {"name": "vpc-b-web-net", "subnet": "10.1.1.0/24", "tenant": "tenant-2", "vlan": "201", "ovn_switch": "ls-vpc-b-web"},
+            {"name": "vpc-b-app-net", "subnet": "10.1.2.0/24", "tenant": "tenant-2", "vlan": "202", "ovn_switch": "ls-vpc-b-app"},
+            {"name": "vpc-b-db-net", "subnet": "10.1.3.0/24", "tenant": "tenant-2", "vlan": "203", "ovn_switch": "ls-vpc-b-db"},
+            {"name": "vpc-b-test-net", "subnet": "10.1.4.0/24", "tenant": "tenant-2", "vlan": "204", "ovn_switch": "ls-vpc-b-test"},
+            # Note: transit-overlay is a regular bridge network for OVN components, not OVS
+        ]
+
+        for net_config in network_configs:
+            # Check if network already exists
+            result = subprocess.run(
+                ["docker", "network", "ls", "--format", "{{.Name}}"],
+                capture_output=True, text=True
+            )
+            if net_config["name"] in result.stdout:
+                logger.info(f"Network {net_config['name']} already exists")
+                networks_created.append(net_config["name"])
+                continue
+
+            # Build docker network create command
+            cmd = [
+                "docker", "network", "create",
+                "--driver", plugin.plugin_name,
+                "--subnet", net_config["subnet"],
+                "--opt", "bridge=br-int",
+                "--opt", f"tenant_id={net_config['tenant']}"
             ]
 
-        successful = 0
-        failed = 0
-        skipped = 0
+            if net_config["vlan"]:
+                cmd.extend(["--opt", f"vlan={net_config['vlan']}"])
 
-        for config in container_configs:
-            # Check if container exists and is running
-            result = subprocess.run(["docker", "ps", "-q", "-f", f"name={config['name']}"], capture_output=True, text=True)
-            if result.stdout.strip():
-                # Use MAC from config (persistent) or let bind_container_to_ovn handle it
-                success = self.bind_container_to_ovn(
-                    config["name"],
-                    config["switch"],
-                    config["ip"],
-                    config.get("mac")  # Pass MAC from config, or None to generate
-                )
-                if success:
-                    successful += 1
+            # Add OVN switch mapping if specified
+            if "ovn_switch" in net_config:
+                # Get OVN connection from config or use default for container environment
+                if self.config_manager and self.config_manager.ovn_cluster:
+                    # For plugin running in container, use ovn-central hostname
+                    # (config has 127.0.0.1 which is for direct ovn-nbctl commands)
+                    nb_conn = "tcp:ovn-central:6641"
+                    sb_conn = "tcp:ovn-central:6642"
                 else:
-                    failed += 1
-                    logger.error(f"FAILED to bind container {config['name']} to OVN")
-            else:
-                logger.warning(f"Container {config['name']} not found or not running")
-                skipped += 1
+                    # Fallback to ovn-central hostname
+                    nb_conn = "tcp:ovn-central:6641"
+                    sb_conn = "tcp:ovn-central:6642"
 
-        if failed > 0:
-            logger.error(f"Container networking setup had failures: {successful} successful, {failed} failed, {skipped} not running")
-        elif skipped > 0:
-            logger.info(f"Container networking setup complete: {successful} containers bound successfully ({skipped} containers not running)")
+                cmd.extend([
+                    "--opt", f"ovn.switch={net_config['ovn_switch']}",
+                    "--opt", f"ovn.nb_connection={nb_conn}",
+                    "--opt", f"ovn.sb_connection={sb_conn}"
+                ])
+
+            cmd.append(net_config["name"])
+
+            # Create the network
+            logger.info(f"Creating network {net_config['name']} ({net_config['subnet']})...")
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode == 0:
+                networks_created.append(net_config["name"])
+                logger.info(f"✅ Created network {net_config['name']}")
+            else:
+                networks_failed.append(net_config["name"])
+                logger.error(f"Failed to create network {net_config['name']}: {result.stderr}")
+
+        if networks_failed:
+            logger.error(f"Failed to create networks: {networks_failed}")
+            return False
         else:
-            logger.info(f"Container networking setup complete: {successful} containers bound successfully")
+            logger.info(f"✅ All Docker networks created successfully: {len(networks_created)} networks")
+            return True
+
+    def setup_container_networking(self):
+        """Legacy function - now just creates Docker networks"""
+        logger.info("Setting up container networking...")
+        return self.create_docker_networks()
 
     def setup_traffic_generators_only(self):
-        """Set up OVN networking ONLY for traffic generator containers"""
-        logger.info("Setting up traffic generator networking via OVN...")
-
-        # Get traffic generator configuration
+        """REMOVED - Traffic generators use Docker networks like other containers"""
+        raise NotImplementedError("Traffic generator setup removed. Use Docker networks: orchestrator.py create-networks")
+        # Original implementation removed - 50+ lines of special traffic generator handling
+        # Traffic generators now use same Docker networks as other containers
+        return  # Never reached
         traffic_gen_configs = []
 
         if self.config_manager:
@@ -2478,11 +2693,7 @@ def main():
     # Setup-chassis command
     chassis_parser = subparsers.add_parser("setup-chassis", help="Configure OVS as OVN chassis")
 
-    # Bind-containers command
-    bind_parser = subparsers.add_parser("bind-containers", help="Bind containers to OVN")
-
-    # Bind-traffic-generators command
-    bind_traffic_parser = subparsers.add_parser("bind-traffic-generators", help="Bind ONLY traffic generator containers to OVN")
+    # Container binding is now handled automatically via Docker networks
 
     # Setup-monitoring command
     monitoring_parser = subparsers.add_parser("setup-monitoring", help="Setup monitoring exporters on host")
@@ -2493,6 +2704,12 @@ def main():
     # Check command
     check_parser = subparsers.add_parser("check", help="Run comprehensive network diagnostics")
 
+
+    # Plugin management commands
+    plugin_parser = subparsers.add_parser("install-plugin", help="Install OVS Container Network plugin")
+    uninstall_plugin_parser = subparsers.add_parser("uninstall-plugin", help="Uninstall OVS Container Network plugin")
+    plugin_status_parser = subparsers.add_parser("plugin-status", help="Check OVS Container Network plugin status")
+    create_networks_parser = subparsers.add_parser("create-networks", help="Create Docker networks using OVS plugin")
 
     # Chaos command
     chaos_parser = subparsers.add_parser("chaos", help="Run chaos scenarios")
@@ -2514,23 +2731,91 @@ def main():
         return 1
 
     # Execute commands
-    if args.command == "setup":
+    if args.command == "install-plugin":
+        plugin = DockerNetworkPlugin()
+        success = plugin.install()
+        return 0 if success else 1
+
+    elif args.command == "uninstall-plugin":
+        plugin = DockerNetworkPlugin()
+        success = plugin.uninstall()
+        return 0 if success else 1
+
+    elif args.command == "plugin-status":
+        plugin = DockerNetworkPlugin()
+        status = plugin.get_status()
+        if status["installed"]:
+            logger.info(f"✅ Plugin installed: {plugin.plugin_name}")
+            logger.info(f"   Enabled: {status['enabled']}")
+            if status["networks"]:
+                logger.info(f"   Networks using plugin: {', '.join(status['networks'])}")
+            else:
+                logger.info("   No networks using plugin yet")
+        else:
+            logger.info("❌ Plugin not installed")
+        return 0
+
+    elif args.command == "create-networks":
+        plugin = DockerNetworkPlugin()
+        if not plugin.is_installed():
+            logger.error("Plugin not installed. Run: orchestrator.py install-plugin")
+            return 1
         ovn = OVNManager(config_manager)
+        success = ovn.create_docker_networks()
+        return 0 if success else 1
+
+    elif args.command == "setup":
+        logger.info("🚀 Setting up OVS Container Lab...")
+
+        # Step 1: Setup monitoring exporters
+        logger.info("Step 1/4: Setting up monitoring exporters...")
+        monitor = MonitoringManager()
+        if not monitor.setup_ovs_exporter() or not monitor.setup_node_exporter():
+            logger.error("❌ Monitoring setup failed")
+            return 1
+        logger.info("✓ Monitoring exporters ready")
+
+        # Step 2: Wait for OVN central
+        logger.info("Step 2/4: Waiting for OVN central...")
+        max_wait = 30
+        for i in range(max_wait):
+            result = subprocess.run(
+                ["docker", "exec", "ovn-central", "ovn-nbctl", "show"],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                logger.info("✓ OVN central is ready")
+                break
+            if i == max_wait - 1:
+                logger.error("❌ OVN central not ready")
+                return 1
+            time.sleep(1)
+
+        # Step 3: Setup OVS chassis
+        logger.info("Step 3/4: Configuring OVS as OVN chassis...")
+        ovn = OVNManager(config_manager)
+        if not ovn.setup_ovs_chassis():
+            logger.error("❌ Failed to setup OVS chassis")
+            return 1
+        logger.info("✓ OVS chassis configured")
+
+        # Step 4: Setup OVN topology
+        logger.info("Step 4/4: Creating OVN logical topology...")
         ovn.setup_topology()
+        logger.info("✓ OVN topology created")
+
+        logger.info("✅ OVS Container Lab is ready!")
+        logger.info("")
+        logger.info("Access points:")
+        logger.info("  Grafana:    http://localhost:3000 (admin/admin)")
+        logger.info("  Prometheus: http://localhost:9090")
 
     elif args.command == "setup-chassis":
         ovn = OVNManager(config_manager)
         success = ovn.setup_ovs_chassis()
         return 0 if success else 1
 
-    elif args.command == "bind-containers":
-        ovn = OVNManager(config_manager)
-        ovn.setup_container_networking()
-
-    elif args.command == "bind-traffic-generators":
-        ovn = OVNManager(config_manager)
-        success = ovn.setup_traffic_generators_only()
-        return 0 if success else 1
+    # Removed bind-containers and bind-traffic-generators - Docker networks handle this automatically
 
     elif args.command == "setup-monitoring":
         monitor = MonitoringManager()
@@ -2551,94 +2836,8 @@ def main():
         chaos = ChaosEngineer()
         chaos.run_scenario(args.scenario, args.duration, args.target)
 
-    elif args.command == "up":
-        # Comprehensive setup with proper order and error handling
-        logger.info("🚀 Starting OVS Container Lab with proper orchestration...")
-
-        # Step 1: Setup monitoring exporters (non-critical, can fail)
-        logger.info("Step 1/6: Setting up monitoring exporters...")
-        monitor = MonitoringManager()
-        if not monitor.setup_ovs_exporter() or not monitor.setup_node_exporter():
-            logger.error("❌ Monitoring setup failed. Cannot proceed.")
-            return 1
-        logger.info("✓ Monitoring exporters ready")
-
-        # Step 2: Wait for OVN central to be healthy
-        logger.info("Step 2/6: Waiting for OVN central to be ready...")
-        max_wait = 30
-        for i in range(max_wait):
-            result = subprocess.run(
-                ["docker", "exec", "ovn-central", "ovn-nbctl", "show"],
-                capture_output=True, text=True
-            )
-            if result.returncode == 0:
-                logger.info("✓ OVN central is ready")
-                break
-            if i == max_wait - 1:
-                logger.error("❌ OVN central not ready after 30 seconds. Cannot proceed.")
-                return 1
-            time.sleep(1)
-
-        # Step 3: Setup OVS chassis
-        logger.info("Step 3/6: Configuring OVS as OVN chassis...")
-        ovn = OVNManager(config_manager)
-        if not ovn.setup_ovs_chassis():
-            logger.error("❌ Failed to setup OVS chassis. Cannot proceed.")
-            return 1
-        logger.info("✓ OVS chassis configured")
-
-        # Step 4: Wait for ALL containers to be running
-        logger.info("Step 4/6: Waiting for all containers to be running...")
-        required_containers = [
-            "vpc-a-web", "vpc-a-app", "vpc-a-db", "traffic-gen-a",
-            "vpc-b-web", "vpc-b-app", "vpc-b-db", "traffic-gen-b",
-            "nat-gateway"
-        ]
-
-        max_wait = 30
-        for i in range(max_wait):
-            result = subprocess.run(
-                ["docker", "ps", "--format", "{{.Names}}"],
-                capture_output=True, text=True
-            )
-            running = result.stdout.strip().split('\n')
-            missing = [c for c in required_containers if c not in running]
-
-            if not missing:
-                logger.info("✓ All containers are running")
-                break
-
-            if i == max_wait - 1:
-                logger.error(f"❌ Containers not running after 30 seconds: {missing}")
-                logger.error("Cannot proceed without all containers.")
-                return 1
-
-            if i % 5 == 0:
-                logger.info(f"  Waiting for containers: {missing}")
-            time.sleep(1)
-
-        # Step 5: NOW setup OVN topology (AFTER containers exist!)
-        logger.info("Step 5/6: Creating OVN logical topology...")
-        ovn.setup_topology()
-        logger.info("✓ OVN topology created")
-
-        # Step 6: Bind containers to OVN
-        logger.info("Step 6/6: Binding containers to OVN...")
-        ovn.setup_container_networking()
-
-        # Also bind traffic generators
-        logger.info("Binding traffic generators...")
-        ovn.setup_traffic_generators_only()
-
-        # Verify bindings are successful
-        time.sleep(2)  # Brief wait for bindings to settle
-        checker = NetworkChecker(config_manager)
-        issues = checker._check_bindings()
-        if issues:
-            logger.error("❌ Port binding verification failed:")
-            for issue in issues:
-                logger.error(f"  {issue}")
-            return 1
+        # With Docker networks, containers are automatically connected
+        logger.info("✅ Containers are using Docker networks with OVS plugin")
 
         logger.info("✅ OVS Container Lab is ready!")
         logger.info("")

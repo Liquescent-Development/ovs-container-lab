@@ -1,45 +1,15 @@
 #!/bin/bash
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting OVN container..."
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting OVN Central components only..."
 
-# Start OVS first
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting OVS..."
-service openvswitch-switch start
-
-# Ensure ovs-vswitchd is actually running
-if ! pgrep -x ovs-vswitchd >/dev/null; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting ovs-vswitchd manually..."
-    ovs-vswitchd --pidfile --detach --log-file
-fi
-
-# Wait for OVS to be ready
-OVS_READY=false
-for i in {1..30}; do
-    if ovs-vsctl --timeout=5 show &>/dev/null; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] OVS is ready"
-        OVS_READY=true
-        break
-    fi
-    sleep 1
-done
-
-if [ "$OVS_READY" != "true" ]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: OVS failed to start properly"
-    exit 1
-fi
-
-# Set OVS to use OVN with timeout
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Configuring OVS for OVN..."
-ovs-vsctl --timeout=5 set open_vswitch . external_ids:ovn-bridge="br-int"
-ovs-vsctl --timeout=5 set open_vswitch . external_ids:ovn-remote="unix:/var/run/ovn/ovnsb_db.sock"
-ovs-vsctl --timeout=5 set open_vswitch . external_ids:ovn-encap-type="geneve"
-ovs-vsctl --timeout=5 set open_vswitch . external_ids:ovn-encap-ip="127.0.0.1"
+# NOTE: This container only runs OVN control plane (NB/SB databases and northd)
+# OVS and OVN controller should run on the compute nodes (host or ovs container)
 
 # Start OVN Central components (Northbound and Southbound databases)
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting OVN Central components..."
 
 # Create OVN directories
-mkdir -p /var/lib/ovn /var/run/ovn /var/log/ovn
+mkdir -p /var/lib/ovn /var/run/ovn /var/log/ovn /var/run/openvswitch
 
 # Create database files if they don't exist
 if [ ! -f /var/lib/ovn/ovnnb.db ]; then
@@ -90,72 +60,22 @@ ovn-northd --detach --monitor \
     --ovnnb-db=unix:/var/run/ovn/ovnnb_db.sock \
     --ovnsb-db=unix:/var/run/ovn/ovnsb_db.sock
 
-# Start OVN controller
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting OVN controller..."
-ovn-controller --detach --monitor \
-    --log-file=/var/log/ovn/ovn-controller.log \
-    --pidfile=/var/run/ovn/ovn-controller.pid \
-    unix:/var/run/openvswitch/db.sock
+# NOTE: OVN controller is NOT started here - it should run on compute nodes
+# where OVS is running (in the ovs container or on the host)
 
-# Wait for OVN to be ready
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Waiting for OVN to be ready..."
+# Wait for OVN databases to be ready
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Waiting for OVN databases to be ready..."
 for i in {1..30}; do
     if ovn-nbctl ls-list &>/dev/null && ovn-sbctl show &>/dev/null; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] OVN is ready"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] OVN databases are ready"
         break
     fi
     sleep 1
 done
 
-# Create integration bridge
-ovs-vsctl --may-exist add-br br-int -- set bridge br-int fail-mode=secure
+# NOTE: br-int bridge is NOT created here - it should be created on compute nodes
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] OVN setup complete"
-
-# Start OVN Docker overlay driver if enabled
-if [ "$ENABLE_DOCKER_DRIVER" == "true" ]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting OVN Docker overlay driver..."
-
-    # Configure OVS external_ids for the driver
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Configuring OVS external_ids for Docker driver..."
-    ovs-vsctl set open_vswitch . external_ids:ovn-nb="tcp://127.0.0.1:6641"
-    ovs-vsctl set open_vswitch . external_ids:ovn-encap-ip="127.0.0.1"
-    ovs-vsctl set open_vswitch . external_ids:ovn-encap-type="geneve"
-
-    # Set OVN database locations for the driver
-    export OVN_NB="tcp://127.0.0.1:6641"
-    export OVN_SB="tcp://127.0.0.1:6642"
-
-    # Check if the driver exists (prefer /usr/local/bin for our fixed version)
-    DRIVER_PATH="/usr/local/bin/ovn-docker-overlay-driver"
-    if [ ! -x "$DRIVER_PATH" ]; then
-        DRIVER_PATH="/usr/bin/ovn-docker-overlay-driver"
-    fi
-
-    if [ -x "$DRIVER_PATH" ]; then
-        # Kill any existing driver process
-        pkill -f ovn-docker-overlay-driver 2>/dev/null || true
-        sleep 1
-
-        # Start the driver (it will daemonize itself)
-        $DRIVER_PATH
-
-        # Wait for the driver to start
-        for i in {1..10}; do
-            if netstat -tlnp 2>/dev/null | grep -q ':5000'; then
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Docker overlay driver started on port 5000"
-                break
-            fi
-            sleep 1
-        done
-
-        if ! netstat -tlnp 2>/dev/null | grep -q ':5000'; then
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Docker driver not listening on port 5000"
-        fi
-    else
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: ovn-docker-overlay-driver not found"
-    fi
-fi
 
 # Start OVN exporter
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting OVN exporter..."
@@ -179,4 +99,4 @@ done
 touch /tmp/ovn-ready
 
 # Keep container running and show logs
-tail -F /var/log/ovn/*.log /var/log/openvswitch/*.log 2>/dev/null
+tail -F /var/log/ovn/*.log 2>/dev/null
