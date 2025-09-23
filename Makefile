@@ -19,12 +19,15 @@ help:
 	@echo "  make check        - Verify configuration and topology"
 	@echo "  make go-version   - Check Go version in VM"
 	@echo ""
-	@echo "TRAFFIC GENERATION:"
-	@echo "  make traffic-run   - Generate normal traffic"
-	@echo "  make traffic-chaos - Generate chaos traffic (heavy internal)"
-	@echo "  make traffic-stop  - Stop all traffic generation"
+	@echo "TRAFFIC GENERATION (using ntttcp):"
+	@echo "  make traffic-standard - Generate standard traffic (100 Mbps, 4 threads)"
+	@echo "  make traffic-chaos    - Generate chaos traffic (1 Gbps, 16 threads)"
+	@echo "  make traffic-stop     - Stop all traffic generation"
+	@echo "  make traffic-status   - Check traffic generation status"
 	@echo ""
 	@echo "CHAOS ENGINEERING:"
+	@echo "  make chaos-inject     - Run Pumba network chaos (5 min)"
+	@echo "  make chaos-info       - Show available containers for chaos"
 	@echo "  make chaos-loss       - Simulate 30% packet loss"
 	@echo "  make chaos-delay      - Add 100ms network delay"
 	@echo "  make chaos-bandwidth  - Limit bandwidth to 1mbit"
@@ -33,9 +36,11 @@ help:
 	@echo "  make chaos-duplication - Introduce packet duplication"
 	@echo ""
 	@echo "MONITORING:"
-	@echo "  make logs        - Follow container logs"
-	@echo "  make dashboard   - Open Grafana (http://localhost:3000)"
-	@echo "  make metrics     - Show current metrics"
+	@echo "  make logs             - Follow container logs"
+	@echo "  make dashboard        - Open Grafana (http://localhost:3000)"
+	@echo "  make metrics          - Show current metrics"
+	@echo "  make setup-monitoring - Setup OVS/OVN exporters"
+	@echo "  make monitoring-check - Check monitoring exporters status"
 	@echo ""
 	@echo "PLUGIN MANAGEMENT:"
 	@echo "  make plugin-install   - Install OVS network plugin"
@@ -44,8 +49,9 @@ help:
 	@echo ""
 	@echo "DEVELOPMENT:"
 	@echo "  make shell-vm    - SSH into Lima VM"
-	@echo "  make shell-ovn   - Shell into OVN container"
-	@echo "  make shell-ovs   - Shell into OVS container"
+	@echo "  make shell-ovn   - Shell into OVN container (if exists)"
+	@echo "  make test-unit   - Run unit tests for plugin"
+	@echo "  make test-full   - Run all tests including integration"
 	@echo ""
 	@echo "Configuration: docker-compose.yml"
 
@@ -58,17 +64,20 @@ up: _ensure-vm
 	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker build -t ovn-central:latest ./ovn-container
 	@echo ""
 	@echo "Step 2: Installing OVS network plugin..."
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator-simple.py install-plugin
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py install-plugin
 	@echo ""
 	@echo "Step 3: Setting up monitoring exporters..."
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator-simple.py setup-monitoring
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py setup-monitoring
 	@echo ""
 	@echo "Step 4: Starting containers (networks created automatically by docker-compose)..."
 	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker compose up -d
 	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker compose --profile testing --profile vpc --profile traffic --profile chaos up -d
 	@echo ""
 	@echo "Step 5: Setting up OVS chassis connection to OVN..."
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator-simple.py setup-chassis
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py setup-chassis
+	@echo ""
+	@echo "Step 6: Connecting Prometheus to OVN network..."
+	@limactl shell ovs-lab -- bash -c "sudo docker network connect transit-overlay prometheus 2>/dev/null || echo 'Already connected or network not ready yet'"
 	@echo ""
 	@echo "✅ OVS Container Lab is ready!"
 	@echo "  Grafana:    http://localhost:3000 (admin/admin)"
@@ -78,11 +87,11 @@ up: _ensure-vm
 
 plugin-install: _ensure-vm
 	@echo "🔌 Installing OVS Container Network plugin..."
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator-simple.py install-plugin
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py install-plugin
 
 plugin-uninstall: _ensure-vm
 	@echo "🔌 Uninstalling OVS Container Network plugin..."
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator-simple.py uninstall-plugin
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py uninstall-plugin
 
 plugin-status: _ensure-vm
 	@echo "🔍 Checking OVS Container Network plugin status..."
@@ -111,69 +120,114 @@ clean:
 	@limactl delete ovs-lab --force 2>/dev/null || true
 	@echo "✅ Everything cleaned up"
 
-check:
+check: _ensure-vm
 	@echo "🔍 Running network diagnostics..."
-	@echo "Network checking temporarily disabled - needs update for new architecture"
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py check
 
 # ==================== TRAFFIC GENERATION ====================
 
-traffic-run:
+traffic-run: _ensure-vm
 	@echo "📡 Generating normal traffic across VPCs..."
-	@echo "Starting traffic generators with standard patterns..."
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker exec -d traffic-gen-a bash -c 'cd /workspace && python3 traffic-gen.py standard'
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker exec -d traffic-gen-b bash -c 'cd /workspace && python3 traffic-gen.py standard'
-	@echo "Traffic generation started. Monitor in Grafana dashboard."
-	@echo "Use 'make traffic-stop' to stop."
-
-traffic-chaos:
-	@echo "🔥 CHAOS MODE - Heavy internal traffic generation..."
-	@echo "WARNING: This will generate heavy internal traffic to stress test the network!"
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker exec -d traffic-gen-a bash -c 'cd /workspace && python3 traffic-gen.py chaos'
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker exec -d traffic-gen-b bash -c 'cd /workspace && python3 traffic-gen.py chaos'
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py traffic-start --mode standard
 	@echo ""
-	@echo "Starting Pumba chaos injection (runs for 5 minutes in background)..."
-	@echo "Chaos testing needs update for new architecture"
-	@echo ""
-	@echo "✅ Chaos traffic and network failures started!"
+	@echo "✅ Standard traffic generation started!"
 	@echo ""
 	@echo "Monitor in Grafana: http://localhost:3000"
-	@echo "Chaos will run for 5 minutes. Check /tmp/chaos.log for details."
-	@echo ""
-	@echo "To stop chaos early: make traffic-stop"
+	@echo "To stop traffic: make traffic-stop"
 
-traffic-stop:
+traffic-standard: traffic-run  # Alias for consistency
+
+traffic-chaos: _ensure-vm
+	@echo "🔥 CHAOS MODE - Heavy internal traffic generation..."
+	@echo "WARNING: This will generate heavy internal traffic to stress test the network!"
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py traffic-start --mode chaos
+	@echo ""
+	@echo "✅ Chaos traffic generation started!"
+	@echo ""
+	@echo "Monitor in Grafana: http://localhost:3000"
+	@echo "To stop traffic: make traffic-stop"
+	@echo ""
+	@echo "To add network failures: make chaos-inject"
+
+chaos-inject: _ensure-vm
+	@echo "💥 Injecting network chaos with Pumba..."
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- "nohup sudo python3 orchestrator.py chaos mixed --duration 300 > /tmp/chaos.log 2>&1 &"
+	@echo "✅ Network chaos injection started (5 minutes)"
+	@echo "Check logs: tail -f /tmp/chaos.log in Lima VM"
+
+traffic-stop: _ensure-vm
 	@echo "🛑 Stopping all traffic generation..."
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker exec traffic-gen-a pkill -f traffic-gen.py 2>/dev/null || true
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker exec traffic-gen-b pkill -f traffic-gen.py 2>/dev/null || true
-	@echo "✅ Traffic generation stopped"
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py traffic-stop
+
+traffic-status: _ensure-vm
+	@echo "🔍 Checking traffic generation status..."
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py traffic-status
 
 # ==================== CHAOS ENGINEERING ====================
 
-chaos-loss:
+chaos-info: _ensure-vm
+	@echo "🔍 Discovering containers for chaos testing..."
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py chaos-info
+
+chaos-loss: _ensure-vm
 	@echo "🔥 Simulating 30% packet loss..."
-	@echo "Packet loss chaos needs update for new architecture"
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py chaos packet-loss --duration 60
 
-chaos-delay:
+chaos-delay: _ensure-vm
 	@echo "⏰ Adding 100ms network delay..."
-	@echo "Latency chaos needs update for new architecture"
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py chaos latency --duration 60
 
-chaos-bandwidth:
+chaos-bandwidth: _ensure-vm
 	@echo "🚦 Limiting bandwidth to 1mbit..."
-	@echo "Bandwidth chaos needs update for new architecture"
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py chaos bandwidth --duration 60
 
-chaos-partition:
+chaos-partition: _ensure-vm
 	@echo "🔌 Creating network partition..."
-	@echo "Partition chaos needs update for new architecture"
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py chaos partition --duration 60
 
-chaos-corruption:
+chaos-corruption: _ensure-vm
 	@echo "💥 Introducing packet corruption..."
-	@echo "Corruption chaos needs update for new architecture"
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py chaos corruption --duration 60
 
-chaos-duplication:
+chaos-duplication: _ensure-vm
 	@echo "👥 Introducing packet duplication..."
-	@echo "Duplication chaos needs update for new architecture"
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py chaos duplication --duration 60
 
 # ==================== MONITORING ====================
+
+setup-monitoring: _ensure-vm
+	@echo "📊 Setting up monitoring exporters..."
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py setup-monitoring
+	@echo "✅ Monitoring exporters installed and started"
+
+restart-exporters: _ensure-vm
+	@echo "🔄 Restarting monitoring exporters..."
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py restart-exporters
+
+debug-exporter: _ensure-vm
+	@echo "🔍 Debugging OVS exporter..."
+	@limactl shell ovs-lab -- bash -c "sudo systemctl status ovs-exporter --no-pager || true"
+	@echo ""
+	@echo "Last 10 log lines:"
+	@limactl shell ovs-lab -- bash -c "sudo journalctl -u ovs-exporter -n 10 --no-pager || true"
+	@echo ""
+	@echo "Testing exporter help:"
+	@limactl shell ovs-lab -- bash -c "sudo /usr/local/bin/ovs-exporter --help 2>&1 || true"
+	@echo ""
+	@echo "🔍 Debugging OVN exporter..."
+	@limactl shell ovs-lab -- bash -c "docker exec ovn-central ps aux | grep -E 'ovn-exporter|PID' | grep -v grep || echo 'OVN exporter not running in container'"
+	@limactl shell ovs-lab -- bash -c "docker exec ovn-central netstat -tulpn 2>/dev/null | grep 9476 || echo 'Port 9476 not listening in container'"
+	@limactl shell ovs-lab -- bash -c "docker logs ovn-central 2>&1 | grep -i exporter | tail -5 || echo 'No exporter logs found'"
+
+check-monitoring: _ensure-vm
+	@echo "🔍 Checking monitoring exporters..."
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py check-monitoring
+
+restart-prometheus: _ensure-vm
+	@echo "🔄 Restarting Prometheus to load new configuration..."
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker compose restart prometheus
+	@echo "✅ Prometheus restarted"
+	@echo "Check targets at: http://localhost:9090/targets"
 
 logs:
 	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker compose logs -f
@@ -304,7 +358,7 @@ test:
 # Unit tests for the plugin
 test-unit: _ensure-vm
 	@echo "🧪 Running unit tests for OVS Container Network plugin..."
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator-simple.py test-unit
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py test-unit
 
 # Integration tests - requires plugin to be installed
 test-integration: _ensure-vm
@@ -312,13 +366,13 @@ test-integration: _ensure-vm
 	@echo "Step 1: Checking if plugin is installed..."
 	@if ! limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker plugin ls | grep -q "ovs-container-network.*true"; then \
 		echo "Plugin not found or not enabled. Installing..."; \
-		limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator-simple.py install-plugin; \
+		limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py install-plugin; \
 	else \
 		echo "Plugin is already installed and enabled"; \
 	fi
 	@echo ""
 	@echo "Step 2: Running integration tests..."
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator-simple.py test-integration
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py test-integration
 
 # Full test suite
 test-all: _ensure-vm
@@ -326,11 +380,11 @@ test-all: _ensure-vm
 	@echo "Checking if plugin is installed..."
 	@if ! limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo docker plugin ls | grep -q "ovs-container-network.*true"; then \
 		echo "Plugin not found or not enabled. Installing..."; \
-		limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator-simple.py install-plugin; \
+		limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py install-plugin; \
 	else \
 		echo "Plugin is already installed and enabled"; \
 	fi
-	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator-simple.py test-all
+	@limactl shell --workdir /home/lima/code/ovs-container-lab ovs-lab -- sudo python3 orchestrator.py test-all
 
 # Quick smoke test
 test-quick: _ensure-vm

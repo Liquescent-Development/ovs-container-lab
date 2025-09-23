@@ -1,6 +1,6 @@
 # OVS Container Lab
 
-**A Software-Defined Networking (SDN) lab** using Open vSwitch (OVS) data plane and Open Virtual Network (OVN) control plane, running in a Lima VM. Demonstrates enterprise multi-VPC cloud architectures with full external connectivity - **complete SDN implementation** with NAT Gateway for internet access.
+**A Software-Defined Networking (SDN) lab** using Open vSwitch (OVS) data plane and Open Virtual Network (OVN) control plane, running in a Lima VM. Features a custom **OVN Container Network Plugin** (`ovs-container-network`) for seamless Docker integration with automatic OVN central management (`ovn.auto_create: "true"`). Demonstrates enterprise multi-VPC cloud architectures with full external connectivity - **complete SDN implementation** with NAT Gateway for internet access.
 
 ## Quick Start
 
@@ -8,7 +8,7 @@
 # Install Lima (lightweight VM for macOS)
 brew install lima
 
-# Start everything (VM + containers + networking)
+# Start everything (VM + containers + OVN plugin + networking)
 make up
 # First time: Lima will prompt you to confirm VM creation
 # Select "Proceed with the current configuration" and press Enter
@@ -16,16 +16,16 @@ make up
 
 # Verify everything is working
 make check
-# Runs comprehensive diagnostics: OVS, OVN, containers, NAT gateway
+# Runs comprehensive diagnostics: OVS, OVN, containers, plugin, NAT gateway
 
-# Generate traffic
-make traffic-run      # Normal traffic patterns
-make traffic-chaos    # Heavy stress testing with network failures
-make traffic-stop     # Stop all traffic generation
+# Generate traffic (using Microsoft ntttcp)
+make traffic-standard  # Standard traffic (100 Mbps, 4 threads)
+make traffic-chaos     # Heavy chaos traffic (1 Gbps, 16 threads)
+make traffic-stop      # Stop all traffic generation
 
-# Access Grafana from your Mac
-open http://localhost:3000
-# Or use: make dashboard
+# Access monitoring from your Mac
+make dashboard         # Open Grafana (http://localhost:3000)
+# Default credentials: admin/admin
 
 # Clean up everything
 make clean
@@ -50,6 +50,14 @@ When you run `make up` for the first time, Lima will show:
 5. Start all containers
 
 This takes about 5 minutes on first run. Subsequent starts take only seconds.
+
+**What happens during setup:**
+1. OVN central image build
+2. OVS Container Network Plugin (`ovs-container-network`) installation
+3. Monitoring exporters setup (OVS and OVN)
+4. Container stack startup with automatic network creation via plugin
+5. OVS chassis connection to OVN control plane
+6. Auto-creation of OVN central when needed (ovn.auto_create: "true")
 
 ## Architecture
 
@@ -104,7 +112,8 @@ This takes about 5 minutes on first run. Subsequent starts take only seconds.
 │ │                    OVS Bridge (br-int) - OpenFlow Rules               ││
 │ │  • Processes packets based on OVN-programmed flows                    ││
 │ │  • GENEVE tunneling for overlay networking                            ││
-│ │  • Connected via veth pairs to containers                             ││
+│ │  • Connected via OVN Container Network Plugin                         ││
+│ │  • Auto-creates OVN central when needed (ovn.auto_create: true)       ││
 │ └─────────────────────────┬─────────────────────────────────────────────┘│
 │                           │                                              │
 │         Docker Containers ▼  (Workloads with OVN Port Bindings)          │
@@ -160,11 +169,20 @@ Traffic Flow Examples:
 
 ## Traffic Generation & Chaos Engineering
 
+**Traffic Generation (using Microsoft ntttcp instead of iperf3):**
+
 | Command | Description |
 |---------|------------|
-| `make traffic-run` | Generate normal traffic patterns |
-| `make traffic-chaos` | Heavy traffic + network failures (5 min) |
+| `make traffic-standard` | Generate standard traffic (100 Mbps, 4 threads) |
+| `make traffic-chaos` | Heavy chaos traffic (1 Gbps, 16 threads) |
 | `make traffic-stop` | Stop all traffic generation |
+| `make traffic-status` | Check traffic generation status |
+
+**Chaos Engineering (using Pumba for network fault injection):**
+
+| Command | Description |
+|---------|------------|
+| `make chaos-inject` | Run Pumba network chaos (5 min) |
 | `make chaos-loss` | Simulate 30% packet loss (1 min) |
 | `make chaos-delay` | Add 100ms network delay (1 min) |
 | `make chaos-bandwidth` | Limit bandwidth to 1mbit (1 min) |
@@ -290,7 +308,7 @@ switches:
 
 Network topology is defined directly in docker-compose files:
 
-1. **Edit docker-compose.yml or docker-compose-simple.yml:**
+1. **Edit docker-compose.yml:**
    - Define VPC networks with the OVS plugin
    - Configure OVN logical switches and routers
    - Set up container networking
@@ -343,17 +361,18 @@ vpcs:
 
 ### Configuration Management
 
-The orchestrator-simple.py script provides management commands:
+The orchestrator.py script provides management commands:
 
 ```bash
-# Set up OVN topology
-python3 orchestrator-simple.py setup-ovn
+# Plugin installation and management
+python3 orchestrator.py install-plugin
+python3 orchestrator.py uninstall-plugin
 
-# Configure VPC networks
-python3 orchestrator-simple.py setup-vpcs
+# Monitoring setup
+python3 orchestrator.py setup-monitoring
 
 # Run integration tests
-python3 orchestrator-simple.py test-integration
+python3 orchestrator.py test
 ```
 
 ## Network Diagnostics
@@ -389,14 +408,13 @@ The orchestrator (`orchestrator.py`) provides fine-grained control:
 # Run from inside the VM (make shell-vm)
 cd ~/code/ovs-container-lab
 
-# Complete setup with proper ordering
-sudo python3 orchestrator.py up
+# Plugin management
+sudo python3 orchestrator.py install-plugin     # Install ovs-container-network plugin
+sudo python3 orchestrator.py uninstall-plugin   # Uninstall plugin
 
-# Individual operations
-sudo python3 orchestrator.py setup              # Create OVN topology
+# Infrastructure setup
+sudo python3 orchestrator.py setup-monitoring   # Setup OVS/OVN exporters
 sudo python3 orchestrator.py setup-chassis      # Configure OVS chassis
-sudo python3 orchestrator.py bind-containers    # Bind containers to OVN
-sudo python3 orchestrator.py reconcile          # Fix broken connections
 
 # Diagnostics
 sudo python3 orchestrator.py check              # Full diagnostics
@@ -425,6 +443,8 @@ The lab includes dual monitoring stacks for flexibility:
 - OVN Exporter (port 9476) - OVN logical topology metrics
 - Docker containers - Resource usage and network stats
 - System metrics - CPU, memory, disk, network
+
+**Note**: Monitoring includes comprehensive OVS and OVN exporters with Prometheus/Grafana integration for real-time network visibility.
 
 ### Network Topology Performance Dashboard
 
@@ -468,11 +488,12 @@ sudo docker exec ovn-central ovn-sbctl show  # OVN physical bindings
 
 1. **OVN Control Plane**: Defines logical network topology (routers, switches, ports)
 2. **OVS Data Plane**: Executes OpenFlow rules programmed by OVN controller
-3. **Docker Plugin Integration**: OVN Container Network Plugin handles container networking
+3. **OVN Container Network Plugin**: Custom Docker plugin (`ovs-container-network`) with auto-created OVN central (ovn.auto_create: "true")
 4. **NAT Gateway**: Provides external internet connectivity for all VPCs
 5. **GENEVE Tunnels**: Automatic overlay networking between VPCs
-6. **Container Integration**: Each container bound to an OVN logical switch port via the plugin
-7. **Orchestrator**: Python-based automation with proper error handling and verification
+6. **Container Integration**: Ubuntu 22.04 containers bound to OVN logical switch ports via plugin
+7. **Orchestrator**: Python-based automation (`orchestrator.py`) with proper error handling and verification
+8. **Monitoring**: Dual stack with OVS/OVN exporters feeding Prometheus/Grafana and InfluxDB/Telegraf
 
 ### Network Flow Types
 
@@ -494,9 +515,7 @@ ovs-container-lab/
 ├── lima.yaml                    # Lima VM configuration
 ├── Makefile                     # Simplified control commands
 ├── docker-compose.yml           # Container stack with profiles
-├── docker-compose-simple.yml    # Simplified stack using OVS plugin
-├── orchestrator.py              # Legacy orchestrator (reference only)
-├── orchestrator-simple.py       # Main orchestrator for setup and testing
+├── orchestrator.py              # Main orchestrator for setup and testing (renamed from orchestrator-simple.py)
 ├── scripts/
 │   ├── ovs-docker-*.sh         # OVS-Docker integration
 │   └── network-simulation/      # Traffic and chaos tools
@@ -510,15 +529,15 @@ ovs-container-lab/
 
 ## OVN Container Network Plugin
 
-This lab includes a production-ready **OVN Container Network Plugin** that provides native Docker integration with Open Virtual Network (OVN). The plugin is located in the `ovs-container-network/` directory.
+This lab includes a production-ready **OVN Container Network Plugin** (`ovs-container-network`) that provides native Docker integration with Open Virtual Network (OVN). The plugin is located in the `ovs-container-network/` directory.
 
 **Key Features:**
-- ⚠️ **OVN Required**: All networks must specify OVN logical switch configuration
-- Automated OVN central management with `ovn.auto_create=true`
-- Multi-VPC and multi-tenant support
-- Transit networks for inter-VPC routing
-- Docker Compose compatibility
-- Persistent state management
+- **Auto-creation of OVN central**: Automatically creates OVN central when needed with `ovn.auto_create: "true"`
+- **Multi-VPC and multi-tenant support**: Complete network isolation between tenants
+- **Transit networks for inter-VPC routing**: Seamless connectivity between VPCs
+- **Docker Compose compatibility**: Native Docker integration
+- **Persistent state management**: Survives container restarts
+- **Ubuntu 22.04 base containers**: Modern, stable container environment
 
 **Quick Usage:**
 ```bash
@@ -584,9 +603,10 @@ sudo ovs-vsctl set-controller br-custom tcp:127.0.0.1:6653
 
 ### Performance Testing
 ```bash
+# Using ntttcp (Microsoft's network testing tool) instead of iperf3
 # Inside VM - test internal connectivity
-docker exec vpc-a-web iperf3 -s &
-docker exec vpc-b-web iperf3 -c 10.0.1.10
+docker exec vpc-a-web ntttcp -r -t 30 &
+docker exec vpc-b-web ntttcp -s 10.0.1.10 -t 30 -n 4
 
 # Test external connectivity
 docker exec vpc-a-web ping -c 5 8.8.8.8

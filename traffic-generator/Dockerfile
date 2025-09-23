@@ -14,7 +14,6 @@ RUN apt-get update && apt-get install -y \
     net-tools \
     dnsutils \
     # Traffic generators
-    iperf3 \
     netperf \
     hping3 \
     nmap \
@@ -32,10 +31,20 @@ RUN apt-get update && apt-get install -y \
     mtr \
     traceroute \
     socat \
-    # Build tools for Python packages
+    # Build tools for Python packages and ntttcp
     build-essential \
     libpcap-dev \
+    git \
     && rm -rf /var/lib/apt/lists/*
+
+# Build and install ntttcp
+RUN cd /tmp && \
+    git clone https://github.com/microsoft/ntttcp-for-linux.git && \
+    cd ntttcp-for-linux/src && \
+    make && \
+    cp ntttcp /usr/local/bin/ && \
+    cd / && \
+    rm -rf /tmp/ntttcp-for-linux
 
 # Install Python packages for advanced packet crafting
 RUN pip3 install \

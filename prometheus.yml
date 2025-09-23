@@ -8,23 +8,25 @@ scrape_configs:
       - targets: ['prometheus:9090']
 
   # Host VM exporters (OVS runs on the Lima VM host, not in containers)
-  # Docker containers can reach the host at 172.17.0.1 (docker0 gateway)
+  # In Lima, containers can reach the host via host.lima.internal or host.docker.internal
+  # We use host.docker.internal which Docker Desktop and Lima both support
   - job_name: 'node_exporter'
     static_configs:
-      - targets: ['172.17.0.1:9100']
+      - targets: ['host.docker.internal:9100']
         labels:
           instance: 'lima-host'
 
   - job_name: 'ovs_exporter'
     static_configs:
-      - targets: ['172.17.0.1:9475']
+      - targets: ['host.docker.internal:9475']
         labels:
           instance: 'lima-host'
           component: 'ovs'
 
+  # OVN exporter runs inside ovn-central container (port exposed to host)
   - job_name: 'ovn_exporter'
     static_configs:
-      - targets: ['172.17.0.1:9476']
+      - targets: ['host.docker.internal:9476']
         labels:
-          instance: 'ovn-central'
           component: 'ovn'
+          instance: 'ovn-central'

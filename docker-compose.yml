@@ -75,6 +75,8 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.enable-lifecycle'
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Maps to the Docker host IP
     labels:
       - "ovs-lab=true"
       - "component=monitoring"
@@ -257,15 +259,15 @@ services:
     volumes:
       - ./traffic-generator:/workspace
     command: sleep infinity
-    # Resource limits to prevent system hang
+    # Resource limits - increased for chaos traffic generation
     deploy:
       resources:
         limits:
-          cpus: '0.5'  # 50% of one CPU core
-          memory: 512M
+          cpus: '2.0'  # 2 CPU cores for chaos mode
+          memory: 2048M  # 2GB RAM for buffering
         reservations:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '0.5'
+          memory: 512M
     labels:
       - "ovs-lab=true"
       - "component=testing"
@@ -286,15 +288,15 @@ services:
     volumes:
       - ./traffic-generator:/workspace
     command: sleep infinity
-    # Resource limits to prevent system hang
+    # Resource limits - increased for chaos traffic generation
     deploy:
       resources:
         limits:
-          cpus: '0.5'  # 50% of one CPU core
-          memory: 512M
+          cpus: '2.0'  # 2 CPU cores for chaos mode
+          memory: 2048M  # 2GB RAM for buffering
         reservations:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '0.5'
+          memory: 512M
     labels:
       - "ovs-lab=true"
       - "component=testing"

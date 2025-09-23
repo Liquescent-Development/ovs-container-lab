@@ -331,6 +331,7 @@ func (d *Driver) ensureOVNCentral(nbConn, sbConn string, autoCreate bool, transi
 			ExposedPorts: nat.PortSet{
 				"6641/tcp": struct{}{},
 				"6642/tcp": struct{}{},
+				"9476/tcp": struct{}{}, // OVN exporter metrics
 			},
 		}
 
@@ -342,6 +343,7 @@ func (d *Driver) ensureOVNCentral(nbConn, sbConn string, autoCreate bool, transi
 			PortBindings: nat.PortMap{
 				"6641/tcp": []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: "6641"}},
 				"6642/tcp": []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: "6642"}},
+				"9476/tcp": []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: "9476"}}, // OVN exporter metrics
 			},
 			Mounts: []mount.Mount{
 				{

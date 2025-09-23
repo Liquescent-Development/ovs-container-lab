@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Traffic Generator for OVS/OVN Multi-VPC Testing
-Generates controlled network traffic between VPC-A and VPC-B containers
+Traffic Generator for OVS/OVN Multi-VPC Testing using ntttcp
+Generates high-performance network traffic between VPC-A and VPC-B containers
 Supports multiple intensity modes: standard, high, and chaos
+Uses Microsoft's ntttcp for better concurrency and throughput
 """
 
 import sys
@@ -21,19 +22,19 @@ class TrafficGenerator:
         self.targets = [
             # VPC-A Web
             {'ip': '10.0.1.10', 'name': 'vpc-a-web', 'tier': 'web',
-             'ports': {'tcp': [80, 443], 'iperf': 5201}},
+             'ports': {'tcp': [80, 443], 'ntttcp': 5001}},
             # VPC-A App
             {'ip': '10.0.2.10', 'name': 'vpc-a-app', 'tier': 'app',
-             'ports': {'tcp': [8080, 8443], 'iperf': 5201}},
+             'ports': {'tcp': [8080, 8443], 'ntttcp': 5001}},
             # VPC-A DB
             {'ip': '10.0.3.10', 'name': 'vpc-a-db', 'tier': 'db',
              'ports': {'tcp': [5432, 3306]}},
             # VPC-B Web
             {'ip': '10.1.1.10', 'name': 'vpc-b-web', 'tier': 'web',
-             'ports': {'tcp': [80, 443], 'iperf': 5201}},
+             'ports': {'tcp': [80, 443], 'ntttcp': 5001}},
             # VPC-B App
             {'ip': '10.1.2.10', 'name': 'vpc-b-app', 'tier': 'app',
-             'ports': {'tcp': [8080, 8443], 'iperf': 5201}},
+             'ports': {'tcp': [8080, 8443], 'ntttcp': 5001}},
             # VPC-B DB
             {'ip': '10.1.3.10', 'name': 'vpc-b-db', 'tier': 'db',
              'ports': {'tcp': [5432, 3306]}}
@@ -56,7 +57,7 @@ class TrafficGenerator:
         configs = {
             'standard': {
                 'threads': 4,
-                'max_processes': 10,
+                'max_processes': 3,  # ntttcp handles concurrency internally
                 'packets_per_second': 1000,
                 'bandwidth_mbps': 100,  # 100 Mbps for standard
                 'burst_size': 100,
@@ -66,7 +67,7 @@ class TrafficGenerator:
             },
             'high': {
                 'threads': 6,
-                'max_processes': 20,
+                'max_processes': 5,  # ntttcp handles concurrency internally
                 'packets_per_second': 5000,
                 'bandwidth_mbps': 500,  # 500 Mbps for high
                 'burst_size': 200,
@@ -75,14 +76,14 @@ class TrafficGenerator:
                 'cpu_limit': 70,
             },
             'chaos': {
-                'threads': 8,
-                'max_processes': 30,
-                'packets_per_second': 10000,
+                'threads': 16,  # More threads for chaos
+                'max_processes': 10,  # ntttcp handles concurrency internally
+                'packets_per_second': 20000,  # Double the packet rate
                 'bandwidth_mbps': 1000,  # 1 Gbps for chaos
-                'burst_size': 500,
-                'delay_between_bursts': 0.01,
-                'connection_limit': 60,
-                'cpu_limit': 80,
+                'burst_size': 1000,  # Larger burst sizes
+                'delay_between_bursts': 0.005,  # Faster bursts
+                'connection_limit': 100,  # More connections
+                'cpu_limit': 90,
             }
         }
         return configs.get(mode, configs['standard'])
@@ -251,56 +252,63 @@ class TrafficGenerator:
             finally:
                 self.cleanup_process(proc)
 
-    def controlled_iperf_test(self, target_info):
-        """Use iperf3 to test against actual iperf3 servers"""
-        # Only test targets that have iperf3 running
-        if 'iperf' not in target_info['ports']:
+    def controlled_ntttcp_test(self, target_info):
+        """Use ntttcp for high-performance network testing"""
+        # ntttcp receiver listens on ports 5001-5016 by default
+        if 'ntttcp' not in target_info['ports']:
             return
 
-        bandwidth = f"{self.config['bandwidth_mbps']}M"
-        port = target_info['ports']['iperf']
+        # Determine number of threads based on mode
+        if self.mode == 'chaos':
+            threads = 16  # Maximum threads for chaos mode
+        elif self.mode == 'high':
+            threads = 8
+        else:
+            threads = 4
 
-        # Mix of TCP and UDP tests for realism
-        protocol = random.choice(['-u', ''])  # UDP or TCP
-
+        # Build ntttcp command
         cmd = [
-            'iperf3',
-            '-c', target_info['ip'],
-            '-p', str(port),
-            '-t', '0',  # 0 means run continuously
-            '-b', bandwidth,  # Bandwidth limit
+            'ntttcp',
+            '-s', target_info['ip'],  # sender mode to target IP
+            '-P', str(threads),  # number of parallel connections
+            '-t', '60',  # run for 60 seconds then restart
+            '-N',  # no sync, start immediately
         ]
 
-        if protocol:
-            cmd.append(protocol)
+        # Add UDP flag for some chaos connections
+        if self.mode == 'chaos' and random.random() < 0.3:
+            cmd.append('-u')
+            protocol = 'UDP'
+        else:
+            protocol = 'TCP'
 
         self.wait_for_slot()
 
         try:
-            # Run iperf3 in background continuously
+            # Run ntttcp in background
             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             with self.process_lock:
                 self.active_processes.append(proc)
 
-            # Don't wait for it to complete - it runs continuously
-            print(f"Started iperf3 to {target_info['name']} ({target_info['ip']}:{port}) with {bandwidth} bandwidth")
-            self.stats['iperf_sessions'] += 1
+            print(f"Started ntttcp {protocol} to {target_info['name']} ({target_info['ip']}) with {threads} threads")
+            self.stats['ntttcp_sessions'] = self.stats.get('ntttcp_sessions', 0) + 1
 
         except Exception as e:
-            print(f"Failed to start iperf3 to {target_info['name']}: {e}")
-            self.cleanup_process(proc)
+            print(f"Failed to start ntttcp to {target_info['name']}: {e}")
+            if 'proc' in locals():
+                self.cleanup_process(proc)
 
     def traffic_pattern_normal(self, target_info):
         """Normal traffic pattern - tier-appropriate realistic traffic"""
 
         # Choose traffic type based on target tier
         if target_info['tier'] == 'web':
-            # Web tier gets more HTTP-like traffic and iperf
+            # Web tier gets more HTTP-like traffic and ntttcp
             methods = [
                 (self.controlled_ping, 0.1),
                 (self.controlled_tcp_test, 0.3),
                 (self.controlled_http_test, 0.3),
-                (self.controlled_iperf_test, 0.2),
+                (self.controlled_ntttcp_test, 0.2),
                 (self.controlled_udp_test, 0.1),
             ]
         elif target_info['tier'] == 'app':
@@ -309,7 +317,7 @@ class TrafficGenerator:
                 (self.controlled_ping, 0.1),
                 (self.controlled_tcp_test, 0.3),
                 (self.controlled_http_test, 0.2),
-                (self.controlled_iperf_test, 0.2),
+                (self.controlled_ntttcp_test, 0.2),
                 (self.controlled_udp_test, 0.2),
             ]
         else:  # db tier
@@ -328,7 +336,7 @@ class TrafficGenerator:
             cumulative += weight
             if rand <= cumulative:
                 # Pass target_info to methods that need it
-                if method in [self.controlled_tcp_test, self.controlled_http_test, self.controlled_iperf_test]:
+                if method in [self.controlled_tcp_test, self.controlled_http_test, self.controlled_ntttcp_test]:
                     method(target_info)
                 else:
                     method(target_info['ip'])
@@ -343,9 +351,9 @@ class TrafficGenerator:
             target = random.choice(targets)
 
             # For bursts, use the service most appropriate for the tier
-            if 'iperf' in target['ports']:
-                # Use iperf for bandwidth burst on web/app tiers
-                t = threading.Thread(target=self.controlled_iperf_test, args=(target,))
+            if 'ntttcp' in target['ports']:
+                # Use ntttcp for bandwidth burst on web/app tiers
+                t = threading.Thread(target=self.controlled_ntttcp_test, args=(target,))
             elif target['tier'] in ['web', 'app']:
                 # Use HTTP-like traffic for web/app
                 t = threading.Thread(target=self.controlled_http_test, args=(target,))
@@ -402,7 +410,7 @@ class TrafficGenerator:
             print(f"  TCP Connections: {self.stats['tcp_connections']:,}")
             print(f"  HTTP-like Requests: {self.stats['http_requests']:,}")
             print(f"  Bytes Sent: {self.stats['bytes_sent']:,}")
-            print(f"  iperf3 Bytes: {self.stats['iperf_bytes']:,}")
+            print(f"  ntttcp Sessions: {self.stats.get('ntttcp_sessions', 0):,}")
             print(f"  Web Tier Connections: {self.stats.get('web_connections', 0):,}")
             print(f"  App Tier Connections: {self.stats.get('app_connections', 0):,}")
             print(f"  DB Tier Connections: {self.stats.get('db_connections', 0):,}")

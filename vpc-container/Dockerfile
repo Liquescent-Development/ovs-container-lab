@@ -1,25 +1,39 @@
-FROM alpine:latest
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Install all necessary network tools
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y \
     # Basic networking
     iproute2 \
-    iputils \
+    iputils-ping \
     net-tools \
     # Traffic testing
-    iperf3 \
     netcat-openbsd \
     curl \
     wget \
     tcpdump \
     # DNS tools
-    bind-tools \
+    dnsutils \
     # Process management
-    bash \
     htop \
+    procps \
     # Debugging
     strace \
-    busybox-extras
+    # Build tools for ntttcp
+    git \
+    gcc \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build and install ntttcp
+RUN cd /tmp && \
+    git clone https://github.com/microsoft/ntttcp-for-linux.git && \
+    cd ntttcp-for-linux/src && \
+    make && \
+    cp ntttcp /usr/local/bin/ && \
+    cd / && \
+    rm -rf /tmp/ntttcp-for-linux
 
 # Create entrypoint script
 COPY entrypoint.sh /entrypoint.sh
