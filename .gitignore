@@ -8,6 +8,17 @@ IMPROVEMENTS.md
 .claude
 .vscode
 
+# VM images - saved snapshots
+.vm-images/
+
+# VM manager runtime images (should be generated, not committed)
+vm-manager/images/*.qcow2
+vm-manager/images/*.iso
+vm-manager/images/*.img
+
+# Downloaded cache files (Docker install script, Go, VM images)
+.downloads/
+
 # OVS Container Network plugin build artifacts
 ovs-container-network/bin/
 ovs-container-network/sbin/
@@ -32,4 +43,4 @@ ovs-container-network/ovs-container-network
 
 # Generic bin/sbin in root
 bin/
-sbin/
+sbin/.downloads/

@@ -31,6 +31,31 @@ make dashboard         # Open Grafana (http://localhost:3000)
 make clean
 ```
 
+### VM Image Caching (Speed up restarts)
+
+After your first successful setup, you can save the VM image to avoid re-downloading and reinstalling everything:
+
+```bash
+# After first successful setup, save the VM as an image
+make save-image
+# Creates .vm-images/ovs-lab-latest.tar with all dependencies pre-installed
+
+# Later, restore from the saved image (much faster than building from scratch)
+make restore-image
+# Restores the VM in ~30 seconds instead of 5-10 minutes
+
+# List available saved images
+make list-images
+
+# Clean up saved images (to save disk space)
+make clean-images
+```
+
+This is especially useful for:
+- Quick recovery after `make clean`
+- Testing different configurations
+- Sharing a pre-configured environment with team members
+
 ### First Time Setup
 
 When you run `make up` for the first time, Lima will show:

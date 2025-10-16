@@ -1858,6 +1858,14 @@ def main():
     chassis_parser.add_argument("--encap-ip", default="172.30.0.1",
                                help="Local IP for tunnel encapsulation (default: 172.30.0.1)")
 
+    # VM commands
+    subparsers.add_parser("create-vms", help="Create and start libvirt VMs")
+    subparsers.add_parser("destroy-vms", help="Stop and remove libvirt VMs")
+    subparsers.add_parser("vm-status", help="Show status of VMs")
+
+    vm_console_parser = subparsers.add_parser("vm-console", help="Connect to VM console")
+    vm_console_parser.add_argument("--vm", required=True, help="VM name (vpc-a-vm or vpc-b-vm)")
+
     # Test commands
     subparsers.add_parser("test-unit", help="Run unit tests for the plugin")
     subparsers.add_parser("test-integration", help="Run integration tests for the plugin")
@@ -1953,6 +1961,59 @@ def main():
     elif args.command == "chaos":
         chaos = ChaosEngineer()
         return 0 if chaos.run_scenario(args.scenario, args.duration, args.target) else 1
+
+    elif args.command == "create-vms":
+        # Import here to avoid dependency issues if libvirt not installed
+        try:
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'vm-manager'))
+            from vm_manager import VMManager
+            vm_mgr = VMManager()
+            if not vm_mgr.check_dependencies():
+                logger.error("VM dependencies not met. Please install libvirt and KVM.")
+                return 1
+            return 0 if vm_mgr.create_all_vms() else 1
+        except ImportError as e:
+            logger.error(f"Failed to import VM manager: {e}")
+            return 1
+
+    elif args.command == "destroy-vms":
+        try:
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'vm-manager'))
+            from vm_manager import VMManager
+            vm_mgr = VMManager()
+            return 0 if vm_mgr.destroy_all_vms() else 1
+        except ImportError as e:
+            logger.error(f"Failed to import VM manager: {e}")
+            return 1
+
+    elif args.command == "vm-status":
+        try:
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'vm-manager'))
+            from vm_manager import VMManager
+            vm_mgr = VMManager()
+            status = vm_mgr.get_vm_status()
+            print("\n🖥️  VM Status")
+            print("=" * 50)
+            for vm_name, info in status.items():
+                status_icon = "✓" if info['running'] else "✗"
+                exists_icon = "✓" if info['exists'] else "✗"
+                print(f"\n📦 {vm_name}:")
+                print(f"   Exists: {exists_icon}")
+                print(f"   Running: {status_icon}")
+                print(f"   IP: {info['ip']}")
+                print(f"   VPC: {info['vpc'].upper()}")
+            print("\n" + "=" * 50)
+            return 0
+        except ImportError as e:
+            logger.error(f"Failed to import VM manager: {e}")
+            return 1
+
+    elif args.command == "vm-console":
+        vm_name = args.vm
+        cmd = ["sudo", "virsh", "console", vm_name]
+        print(f"Connecting to {vm_name} console (use Ctrl+] to exit)...")
+        subprocess.run(cmd)
+        return 0
 
     return 0
 

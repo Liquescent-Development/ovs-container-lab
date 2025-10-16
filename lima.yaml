@@ -1,8 +1,8 @@
 # Lima configuration for OVS Container Lab
-# Lighter alternative to Vagrant/VirtualBox using macOS native virtualization
+# Optimized for OVS container network plugin compatibility
 
-# IMPORTANT: Using Ubuntu 24.04 to match OVN container for OVS/OVN version compatibility
 # VM configuration - supports both Intel and Apple Silicon
+# Using Ubuntu 24.04 to match OVN container versions
 images:
   - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img"
     arch: "aarch64"
@@ -12,6 +12,80 @@ images:
 cpus: 2
 memory: "4GiB"
 disk: "20GiB"
+
+# Disable Lima's containerd/nerdctl - Docker will manage containerd itself
+containerd:
+  system: false
+  user: false
+
+# Probes to track installation progress
+probes:
+  - description: "libvirt is installed and running"
+    script: |
+      #!/bin/bash
+      # Check if libvirt is installed and functional
+
+      echo "Checking libvirt installation..." >&2
+
+      if ! command -v virsh >/dev/null 2>&1; then
+        echo "virsh command not found" >&2
+        exit 1
+      fi
+
+      echo "virsh found, checking libvirtd service..." >&2
+
+      if ! systemctl is-active --quiet libvirtd; then
+        echo "libvirtd service not active" >&2
+        exit 1
+      fi
+
+      echo "libvirtd active, testing functionality..." >&2
+
+      # Test that libvirt actually works
+      if ! virsh list --all >/dev/null 2>&1; then
+        echo "virsh list command failed" >&2
+        exit 1
+      fi
+
+      echo "libvirt is fully functional" >&2
+      exit 0
+    hint: libvirt/KVM is being installed for VM support. This may take 5-10 minutes.
+
+  - description: "Docker is installed and running"
+    script: |
+      #!/bin/bash
+      # Don't use set -e, we want to check each condition
+
+      # Log to help debug
+      echo "Checking Docker installation..." >&2
+
+      if ! command -v docker >/dev/null 2>&1; then
+        echo "Docker command not found" >&2
+        exit 1
+      fi
+
+      echo "Docker command found, checking service..." >&2
+
+      if ! systemctl is-active --quiet docker; then
+        echo "Docker service not active" >&2
+        systemctl status docker --no-pager >&2 || true
+        exit 1
+      fi
+
+      echo "Docker service active, testing functionality..." >&2
+
+      # Test that docker actually works
+      if ! sudo docker version >/dev/null 2>&1; then
+        echo "Docker version command failed" >&2
+        exit 1
+      fi
+
+      echo "Docker is fully functional" >&2
+      exit 0
+    hint: Docker is being installed. This may take 10-15 minutes on first run.
+
+# Enable nested virtualization for KVM support
+nestedVirtualization: true
 
 # Network configuration - using default (no socket_vmnet required)
 # networks are configured automatically by Lima
@@ -46,13 +120,21 @@ provision:
       #!/bin/bash
       set -e
 
-      echo "🚀 Setting up OVS Container Lab environment..."
+      # Set up logging to file for monitoring progress
+      PROGRESS_FILE="/tmp/lima-provision-progress.log"
+      exec 1> >(tee -a $PROGRESS_FILE)
+      exec 2>&1
+
+      echo "[$(date)] 🚀 Starting OVS Container Lab VM provisioning..."
+      echo "[$(date)] You can monitor progress with: limactl shell ovs-lab tail -f /tmp/lima-provision-progress.log"
 
       # Update system
+      echo "[$(date)] Updating package lists..."
       export DEBIAN_FRONTEND=noninteractive
       apt-get update
 
-      # Install dependencies
+      # Install core dependencies
+      echo "[$(date)] Installing core dependencies..."
       apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
         curl \
         git \
@@ -61,35 +143,170 @@ provision:
         jq \
         python3-pip \
         build-essential
+      echo "[$(date)] ✅ Core dependencies installed"
 
-      # Install Docker
-      if ! command -v docker &> /dev/null; then
-        curl -fsSL https://get.docker.com | bash
-        usermod -aG docker lima
-        systemctl enable docker
+      # Install Docker FIRST (it's more critical and faster)
+      # Install Docker (if not already available)
+      echo "[$(date)] ======================================"
+      echo "[$(date)] 🐳 Checking Docker installation..."
+      echo "[$(date)] ======================================"
+
+      # Check if Docker is already installed
+      if command -v docker &> /dev/null; then
+        echo "[$(date)] Docker is already installed!"
+        docker --version
+      else
+        echo "[$(date)] Docker not found, installing..."
+        echo "[$(date)] NOTE: This downloads ~400MB of Docker packages"
+
+        # Check if cached Docker script exists
+        if [ -f /home/lima/code/ovs-container-lab/.downloads/get-docker.sh ]; then
+          echo "[$(date)] Using cached Docker installation script..."
+          bash /home/lima/code/ovs-container-lab/.downloads/get-docker.sh
+        else
+          echo "[$(date)] Downloading Docker installation script..."
+          curl -fsSL https://get.docker.com | bash
+        fi
       fi
+
+      # Verify Docker was actually installed
+      if ! command -v docker &> /dev/null; then
+        echo "[$(date)] ❌ ERROR: Docker command not found after installation attempt"
+        echo "[$(date)] Docker installation failed. Check the installation logs above."
+        exit 1
+      fi
+
+      # Ensure user is in docker group
+      # Get the actual Lima user from the system
+      if [ -f /etc/passwd ]; then
+        DEFAULT_USER=$(grep -E "^[^:]+:x:1000:" /etc/passwd | cut -d: -f1)
+      fi
+      DEFAULT_USER="${DEFAULT_USER:-lima}"
+      echo "[$(date)] Adding user $DEFAULT_USER to docker group..."
+      if id "$DEFAULT_USER" &>/dev/null; then
+        usermod -aG docker $DEFAULT_USER
+      else
+        echo "[$(date)] Warning: User $DEFAULT_USER not found, skipping group addition"
+      fi
+
+      # Start Docker service - fail fast if it doesn't work
+      echo "[$(date)] Starting Docker service..."
+      systemctl enable docker
+      systemctl start docker
+
+      # Give Docker a moment to initialize
+      sleep 5
+
+      # Wait for Docker to be fully ready
+      echo "[$(date)] ⏳ Waiting for Docker to be fully ready..."
+      MAX_RETRIES=30
+      RETRY_COUNT=0
+      while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        if systemctl is-active --quiet docker; then
+          # Test if Docker actually works
+          if sudo docker version &> /dev/null; then
+            echo "[$(date)] ✅ Docker is fully operational!"
+            break
+          else
+            echo "[$(date)] Docker service is running but not yet responding..."
+          fi
+        else
+          echo "[$(date)] Docker service not yet active..."
+        fi
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+          echo "[$(date)] ❌ ERROR: Docker failed to start after $MAX_RETRIES attempts"
+          echo "[$(date)] Checking Docker status..."
+          systemctl status docker || true
+          journalctl -xe -u docker | tail -50
+          exit 1
+        fi
+        sleep 10
+      done
 
       # Ensure Docker networking is properly initialized
       modprobe bridge || true
       modprobe br_netfilter || true
 
-      # Start Docker and ensure docker0 bridge is created
-      systemctl start docker
-      sleep 5
-
       # Force recreation of docker0 if it doesn't exist
       if ! ip link show docker0 &> /dev/null; then
+        echo "[$(date)] docker0 interface not found, restarting Docker..."
         systemctl restart docker
         sleep 5
+        # Verify docker0 was created
+        if ! ip link show docker0 &> /dev/null; then
+          echo "[$(date)] ⚠️  WARNING: docker0 interface still not present"
+        fi
       fi
 
-      # Verify Docker is working
-      docker ps &> /dev/null || systemctl restart docker
+      # Final verification that Docker is working
+      echo "[$(date)] Performing final Docker verification..."
+      if ! docker ps &> /dev/null; then
+        echo "[$(date)] Docker ps failed, attempting restart..."
+        systemctl restart docker
+        sleep 10
+        if ! docker ps &> /dev/null; then
+          echo "[$(date)] ❌ ERROR: Docker is not functional even after restart"
+          exit 1
+        fi
+      fi
+      echo "[$(date)] ✅ Docker verified and ready for use"
 
       # Install Docker Compose
-      if ! docker compose version &> /dev/null; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" docker-compose-plugin
+      echo "[$(date)] Installing Docker Compose plugin..."
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" docker-compose-plugin
+      echo "[$(date)] ✅ Docker Compose installed"
+
+      # Install KVM/QEMU/libvirt AFTER Docker is working - but don't let it manage networking
+      echo "[$(date)] ======================================"
+      echo "[$(date)] 📦 Installing KVM/QEMU/libvirt..."
+      echo "[$(date)] ======================================"
+      echo "[$(date)] This may take several minutes..."
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+        qemu-kvm \
+        libvirt-daemon-system \
+        libvirt-clients \
+        bridge-utils \
+        virtinst \
+        libguestfs-tools \
+        cloud-image-utils
+      echo "[$(date)] ✅ KVM/QEMU/libvirt packages installed"
+
+      # Add default user to libvirt groups
+      # Get the actual Lima user from the system (UID 1000 is typically the first user)
+      if [ -f /etc/passwd ]; then
+        DEFAULT_USER=$(grep -E "^[^:]+:x:1000:" /etc/passwd | cut -d: -f1)
       fi
+      DEFAULT_USER="${DEFAULT_USER:-lima}"
+      echo "[$(date)] Adding $DEFAULT_USER to libvirt and kvm groups..."
+      if id "$DEFAULT_USER" &>/dev/null; then
+        usermod -aG libvirt $DEFAULT_USER
+        usermod -aG kvm $DEFAULT_USER
+      else
+        echo "[$(date)] Warning: User $DEFAULT_USER not found, skipping group addition"
+      fi
+
+      # Start and configure libvirtd
+      echo "[$(date)] Starting libvirtd..."
+      systemctl enable libvirtd
+      systemctl start libvirtd
+
+      # Wait for libvirtd to be ready
+      echo "[$(date)] Waiting for libvirtd to be ready..."
+      for i in {1..10}; do
+        if virsh list --all &>/dev/null; then
+          echo "[$(date)] ✅ libvirtd is ready"
+          break
+        fi
+        echo "[$(date)] Waiting for libvirtd... attempt $i/10"
+        sleep 2
+      done
+
+      # Disable libvirt's default network to prevent bridge conflicts
+      echo "[$(date)] Disabling libvirt default network (virbr0)..."
+      virsh net-destroy default 2>/dev/null || true
+      virsh net-autostart --disable default 2>/dev/null || true
+      echo "[$(date)] ✅ libvirt default network disabled - networking will be handled by OVN/Docker"
 
       # Install Go for testing
       if ! command -v go &> /dev/null; then
@@ -195,11 +412,3 @@ propagateProxyEnv: false
 # SSH config
 ssh:
   forwardAgent: false
-
-# Additional probe for readiness
-probes:
-  - description: "Docker is running"
-    script: |
-      #!/bin/bash
-      systemctl is-active docker
-    hint: Docker is not running. Check with "limactl shell ovs-lab sudo systemctl status docker"

@@ -1,11 +1,5 @@
 #!/bin/bash
 
-# Check if OVS is running
-if ! ovs-vsctl show &>/dev/null; then
-    echo "OVS is not running"
-    exit 1
-fi
-
 # Check if OVN Northbound is accessible
 if ! ovn-nbctl ls-list &>/dev/null; then
     echo "OVN Northbound is not accessible"

@@ -415,6 +415,7 @@ networks:
         - subnet: 10.0.4.0/24
           gateway: 10.0.4.1
 
+
   # VPC-B Networks using OVS plugin
   vpc-b-web-net:
     driver: ovs-container-network:latest
@@ -483,6 +484,7 @@ networks:
       config:
         - subnet: 10.1.4.0/24
           gateway: 10.1.4.1
+
 
 volumes:
   prometheus-data:
